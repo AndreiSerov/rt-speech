@@ -37,6 +37,8 @@ class SegmenterConfig(_Section):
     def _check_cap_fits(self) -> Self:
         if self.split_window_ms > self.split_search_ms:
             raise ValueError("split_window_ms can't exceed split_search_ms")
+        if self.silence_end_ms >= self.max_segment_ms:
+            raise ValueError("silence_end_ms must be below max_segment_ms")
         # A cut must never land before enough speech to pass the minimum.
         start_ms = self.speech_start_frames * FRAME_SAMPLES * 1000 / SAMPLE_RATE
         needed = self.preroll_ms + start_ms + self.min_speech_ms + self.split_search_ms

@@ -21,7 +21,7 @@ from rt_speech.logging_setup import setup_logging
 from rt_speech.segmenter import Segment, segment_stream
 from rt_speech.silero_vad import SileroVad
 
-_CUT_NAME = re.compile(r"segment_\d{4}_\d+\.\d{3}s-\d+\.\d{3}s\.wav")
+_CUT_NAME = re.compile(r"segment_\d{4,}_\d+\.\d{3}s-\d+\.\d{3}s\.wav")
 
 
 def _write_wav(path: Path, segment: Segment) -> None:
@@ -49,7 +49,11 @@ def _is_earlier_cut(path: Path) -> bool:
 
 def _run(input_path: Path, out: Path, config: Config) -> int:
     source = FileSource([(input_path, Stream.SYSTEM)], realtime=config.replay.realtime)
-    if input_path.resolve().parent == out.resolve() and _is_earlier_cut(input_path):
+    if (
+        _is_earlier_cut(input_path)
+        and out.exists()
+        and input_path.parent.samefile(out)
+    ):
         raise FileSourceError(
             f"{input_path} would be replaced by this run. Choose a different --out."
         )

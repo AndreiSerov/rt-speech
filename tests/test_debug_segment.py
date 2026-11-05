@@ -48,6 +48,8 @@ def test_rerunning_replaces_earlier_segments_only(
     out.mkdir()
     old_cut = out / "segment_0099_1.000s-2.000s.wav"
     old_cut.write_bytes(b"stale")
+    old_long_run_cut = out / "segment_10000_1.000s-2.000s.wav"
+    old_long_run_cut.write_bytes(b"stale")
     own_file = out / "segment_notes.wav"
     own_file.write_bytes(b"mine")
     (out / "notes.txt").write_text("keep me")
@@ -55,6 +57,7 @@ def test_rerunning_replaces_earlier_segments_only(
     assert main([str(speech_wav), "--out", str(out)]) == 0
 
     assert not old_cut.exists()
+    assert not old_long_run_cut.exists()
     assert own_file.exists()
     assert (out / "notes.txt").exists()
 
@@ -89,6 +92,21 @@ def test_an_input_that_is_an_earlier_cut_is_refused_and_kept(
 
     assert cut.exists()
     assert "--out" in capsys.readouterr().err
+
+
+def test_an_earlier_cut_is_kept_when_out_is_spelled_differently(
+    speech_wav: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "segments"
+    assert main([str(speech_wav), "--out", str(out)]) == 0
+    cut = sorted(out.glob("*.wav"))[0]
+    other_spelling = out.with_name("SEGMENTS")
+    if not other_spelling.exists():
+        pytest.skip("needs a case-insensitive file system")
+
+    assert main([str(cut), "--out", str(other_spelling)]) == 1
+
+    assert cut.exists()
 
 
 def test_a_failed_run_keeps_earlier_cuts(

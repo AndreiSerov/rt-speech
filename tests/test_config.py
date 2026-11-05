@@ -44,6 +44,7 @@ def test_the_committed_config_is_valid() -> None:
         ("[segmenter]\nsplit_window_ms = 3000\n", "split_window_ms"),
         ("[segmenter]\npreroll_ms = 18000\n", "preroll_ms"),
         ("[segmenter]\nmin_speech_ms = 17000\n", "min_speech_ms"),
+        ("[segmenter]\nsilence_end_ms = 18000\n", "silence_end_ms"),
         ("[segmenter]\nspeech_start_frames = 600\n", "speech_start_frames"),
     ],
 )

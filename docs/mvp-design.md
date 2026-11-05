@@ -95,3 +95,5 @@ Stop after each and report what works, what doesn't, and the main risks (latency
 - Clock drift between the two audio devices on long calls (milestone 4)
 - Without headphones, the Client's words can also appear as Me.
 - Non-call audio on the computer counts as the Client.
+- A cap split landing just after speech ends can shorten that Segment's post-roll. It's rare, and it only removes audio after the last voiced frame.
+- Segment timing assumes frames are contiguous. Live capture must handle dropped frames (milestone 4).
