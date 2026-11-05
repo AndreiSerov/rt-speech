@@ -50,10 +50,53 @@ class SegmenterConfig(_Section):
         return self
 
 
+Language = Literal["ru", "en", "auto"]
+
+
+class SttFilterConfig(_Section):
+    no_speech_threshold: float = Field(default=0.6, ge=0, le=1)
+    avg_logprob_threshold: float = Field(default=-1.0, le=0)
+    near_silence_rms: float = Field(default=0.01, ge=0)
+    filler_phrases: list[str] = [
+        "Спасибо за просмотр",
+        "Субтитры сделал DimaTorzok",
+        "Продолжение следует",
+        "Thanks for watching",
+        "Thank you",
+    ]
+
+
+class MlxWhisperConfig(_Section):
+    model: str = "mlx-community/whisper-large-v3-turbo"
+    filter: SttFilterConfig = SttFilterConfig()
+
+
+class FasterWhisperConfig(_Section):
+    model: str = "large-v3-turbo"
+    compute_type: str = "int8"
+    filter: SttFilterConfig = SttFilterConfig()
+
+
+class SttConfig(_Section):
+    engine: Literal["mlx-whisper", "faster-whisper"] = "mlx-whisper"
+    language: Language = "ru"
+    system_language: Language | None = None
+    mic_language: Language | None = None
+    queue_warning_segments: int = Field(default=5, gt=0)
+    mlx_whisper: MlxWhisperConfig = MlxWhisperConfig()
+    faster_whisper: FasterWhisperConfig = FasterWhisperConfig()
+
+
+class TurnsConfig(_Section):
+    pause_ms: int = Field(default=1_800, gt=0)
+
+
 class Config(_Section):
     logging: LoggingConfig = LoggingConfig()
     replay: ReplayConfig = ReplayConfig()
     segmenter: SegmenterConfig = SegmenterConfig()
+    stt: SttConfig = SttConfig()
+    turns: TurnsConfig = TurnsConfig()
 
 
 class ConfigError(Exception):
