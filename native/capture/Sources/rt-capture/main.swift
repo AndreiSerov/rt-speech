@@ -10,6 +10,7 @@
 import AVFoundation
 import CaptureCore
 import Foundation
+import IOKit.pwr_mgt
 
 func log(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -98,6 +99,18 @@ while let argument = arguments.next() {
 }
 if !system && !mic {
     fail("--no-system and --no-mic leave nothing to capture", code: 64)
+}
+
+// System audio is only available while a display is on, so a quiet stretch of a call
+// mustn't let it idle off. macOS drops this when the process ends.
+var displayAssertion = IOPMAssertionID(0)
+if system {
+    let result = IOPMAssertionCreateWithName(
+        kIOPMAssertionTypeNoDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+        "rt-capture needs a display on to hear system audio" as CFString, &displayAssertion)
+    if result != kIOReturnSuccess {
+        log("Can't keep the display awake, so system audio stops if it idles off")
+    }
 }
 
 let writer = RecordWriter()

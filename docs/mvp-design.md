@@ -79,7 +79,7 @@ A call outlasts any one device, so the Swift CLI stays up through device changes
 - A Stream with no audio for over 1 s gets silence, up to 0.5 s behind the clock, and a log line. Its clock keeps moving, so an open Segment or Turn can close. Gaps of any length are filled the same way when audio returns, so speech on either side stays apart.
 - The microphone restarts on a new `AVAudioEngine` after a device change, retrying every second. The old engine stays silent after the change.
 - System audio restarts its stream after a failure, retrying every 2 s. Stopping it from the macOS menu bar or losing the permission still ends the run.
-- ScreenCaptureKit offers audio only through a display, so **system audio isn't heard while every display is off**, such as when the screen locks or idles.
+- ScreenCaptureKit offers audio only through a display, so **system audio isn't heard while every display is off**. While capturing system audio, the CLI stops the display from idling off. Locking the screen or sleeping the Mac still stops system audio.
 
 ## Milestones
 
@@ -116,6 +116,7 @@ Live capture, playing a `say` phrase through the speakers at low volume:
 - A Russian phrase came through word for word as a Client Turn 1.27 s after playback ended, including the pause that closes the Turn.
 - ScreenCaptureKit keeps delivering frames during silence, so the system Stream's clock keeps advancing.
 - Over 24 s neither Stream had a timestamp step above 32 ms.
+- On real speech, 1.4-8.5 s Segments took 0.21-0.42 s to transcribe. System audio read well, including mixed Russian and English ("trade-off", "accuracy"). The microphone, over AirPods at the time, got counting right but garbled the words after it, differently each time. The cause isn't known yet.
 - An early version lost the microphone for 643.8 s across AirPods changes, and the whole capture when the display turned off. With the same changes, the current one restarted the microphone within a second each time, and system audio one second after the display came back. See "Keeping capture alive".
 
 ## Risks to measure

@@ -354,3 +354,49 @@ def test_a_capture_failure_keeps_what_was_heard_then_reports_itself(tmp_path: Pa
     assert [turn.text for turn in turns] == ["heard"]
     assert isinstance(failure, CaptureError)
     assert "device gone" in str(failure)
+
+
+def _display_assertions() -> str:
+    return subprocess.run(
+        ["pmset", "-g", "assertions"], capture_output=True, text=True, check=True
+    ).stdout
+
+
+def _rt_capture_keeps_display_awake() -> bool:
+    return any(
+        "rt-capture" in line and "NoDisplaySleepAssertion" in line
+        for line in _display_assertions().splitlines()
+    )
+
+
+def _wait_until_display_is_kept_awake() -> bool:
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if _rt_capture_keeps_display_awake():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_capturing_system_audio_keeps_the_display_awake(real_binary: Path) -> None:
+    process = subprocess.Popen(
+        [real_binary, "--test-signal", "--duration", "30"], stdout=subprocess.DEVNULL
+    )
+    try:
+        assert _wait_until_display_is_kept_awake()
+    finally:
+        process.terminate()
+        process.wait()
+    assert not _rt_capture_keeps_display_awake()
+
+
+def test_capturing_without_system_audio_lets_the_display_sleep(real_binary: Path) -> None:
+    process = subprocess.Popen(
+        [real_binary, "--test-signal", "--no-system", "--duration", "30"],
+        stdout=subprocess.DEVNULL,
+    )
+    try:
+        assert not _wait_until_display_is_kept_awake()
+    finally:
+        process.terminate()
+        process.wait()
