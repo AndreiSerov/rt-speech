@@ -72,6 +72,15 @@ The Swift CLI writes logs to stderr, and fixed-size records to stdout, resampled
 
 Python reads this on a dedicated task that only moves frames, so slow STT can't stall capture.
 
+## Keeping capture alive
+
+A call outlasts any one device, so the Swift CLI stays up through device changes:
+
+- A Stream with no audio for over 1 s gets silence, up to 0.5 s behind the clock, and a log line. Its clock keeps moving, so an open Segment or Turn can close. Gaps of any length are filled the same way when audio returns, so speech on either side stays apart.
+- The microphone restarts on a new `AVAudioEngine` after a device change, retrying every second. The old engine stays silent after the change.
+- System audio restarts its stream after a failure, retrying every 2 s. Stopping it from the macOS menu bar or losing the permission still ends the run.
+- ScreenCaptureKit offers audio only through a display, so **system audio isn't heard while every display is off**, such as when the screen locks or idles.
+
 ## Milestones
 
 Stop after each and report what works, what doesn't, and the main risks (latency, hallucinations, language flips).
@@ -102,6 +111,13 @@ These use speech synthesized by macOS `say`, so accuracy on real calls is still 
 - **large-v3-turbo reports `no_speech_prob` 0.0 even on pure silence, and invents text with high confidence: "Продолжение следует..." in Russian, and "Thank you." in English.** The `no_speech_prob` rule therefore never fires on this model. large-v3 (0.61-0.84) and tiny (0.85-0.89) do report it.
 - Silero is the real protection: 0 of 937 frames counted as voiced in each of five 30 s signals of silence, noise and hum. Filler phrases catch what remains on near-silence. Noise or music that Silero does accept could still produce invented text.
 
+Live capture, playing a `say` phrase through the speakers at low volume:
+
+- A Russian phrase came through word for word as a Client Turn 1.27 s after playback ended, including the pause that closes the Turn.
+- ScreenCaptureKit keeps delivering frames during silence, so the system Stream's clock keeps advancing.
+- Over 24 s neither Stream had a timestamp step above 32 ms.
+- An early version lost the microphone for good when AirPods became the default input, and the whole capture when the display turned off. See "Keeping capture alive".
+
 ## Risks to measure
 
 - STT speed and CPU/GPU load on real audio (milestone 3)
@@ -110,4 +126,5 @@ These use speech synthesized by macOS `say`, so accuracy on real calls is still 
 - Without headphones, the Client's words can also appear as Me.
 - Non-call audio on the computer counts as the Client.
 - A cap split landing just after speech ends can shorten that Segment's post-roll. It's rare, and it only removes audio after the last voiced frame.
-- Segment timing assumes frames are contiguous. Live capture must handle dropped frames (milestone 4).
+- If the Python side stops reading, such as when the terminal is paused, the Swift CLI's write queue grows by about 650 MB an hour. Nothing is lost, and nothing limits it.
+- A multi-channel interface with plain numbered channels is heard through its first channel only.
