@@ -18,7 +18,10 @@ Overlay UI, Windows support, per-app audio capture, live diarization, CRM or RAG
 ```
 Swift CLI (system + mic) ─┐
                           ├─> AudioSource -> segmenter (one per stream) -> STT worker -> turn aggregator -> terminal
-WAV files (FileSource) ───┘
+WAV files (FileSource) ───┘                                                                     |
+                                                                                     each closed Client Turn
+                                                                                                v
+                                                                                            Suggester -> terminal
 ```
 
 The pipeline depends only on `AudioSource`, an async iterator of `(stream, pcm, timestamp)`.
@@ -57,7 +60,15 @@ The pipeline depends only on `AudioSource`, an async iterator of `(stream, pcm, 
 - Turns appear in the order their Segments finish, keeping real timestamps.
 - "Pause reached" signals share the queue with Segments, so a Turn can't close while its last Segment is waiting for transcription. A signal gives each Stream's own time, because one can lag behind the other, and says which Streams are mid-speech, because a Segment in progress may still continue the Turn.
 - End of file or Ctrl-C finishes the open Segment, transcribes it, and closes all Turns.
-- Emits `Turn(speaker, text, start, end)` events. The future LLM trigger subscribes to "Client Turn closed".
+- Emits `Turn(speaker, text, start, end)` events. Suggestions subscribe to "Client Turn closed".
+
+## Suggestions
+
+- A `Suggester` takes recent Turns, oldest first and ending with the Client Turn that just closed, and returns short Suggestions. The MVP's `DummySuggester` quotes the end of that Turn and marks its text `(dummy)`. It makes no network calls.
+- The interface is async, because a real model will be a slow network call. Requests run in the background, so Turns keep printing meanwhile.
+- A newer Client Turn cancels a Suggestion still in progress, since it answers something out of date. A Me Turn doesn't: it's added to the context of the next request.
+- A Suggester failure or timeout is logged and the call goes on. When a run ends normally, including on Ctrl-C, the Suggestion in progress gets up to its timeout to finish. When a run fails, it's abandoned so the error shows at once, unless the Suggester ignores cancellation or is stuck in a thread.
+- A real model would send the transcript off the machine, so like a hosted STT engine it must be selected explicitly and print a startup warning.
 
 ## Capture wire format
 
@@ -130,4 +141,5 @@ Live capture, playing a `say` phrase through the speakers at low volume:
 - A cap split landing just after speech ends can shorten that Segment's post-roll. It's rare, and it only removes audio after the last voiced frame.
 - If the Python side stops reading, such as when the terminal is paused, the Swift CLI's write queue grows by about 650 MB an hour. Nothing is lost, and nothing limits it.
 - A multi-channel interface with plain numbered channels is heard through its first channel only.
+- A Client Turn closes on a pause, or once Me's first Segment is transcribed. After a quick reply, a Suggestion therefore starts only once Me has already spoken. Revisit this before adding a real model.
 - Audio arriving over 1 s late overlaps the silence that filled its place, and that part is lost. Measured delivery delays stayed under 0.4 s.

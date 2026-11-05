@@ -4,6 +4,7 @@ import signal
 import threading
 import time
 import wave
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,7 @@ from rt_speech.config import SttConfig
 from rt_speech.stt import TranscriptPiece
 from rt_speech.stt_engines import SttSetupError
 from rt_speech.transcribe import InterruptHandler, main
+from rt_speech.turns import Speaker, Turn
 
 
 class FakeEngine:
@@ -35,10 +37,33 @@ def engine(monkeypatch: pytest.MonkeyPatch) -> FakeEngine:
     return fake
 
 
+@pytest.fixture(autouse=True)
+def keep_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The real one replaces the test process's stdout.
+    monkeypatch.setattr("rt_speech.transcribe._silence_stdout", lambda: None)
+
+
 def test_a_file_prints_as_the_client_by_default(
     engine: FakeEngine, speech_wav: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert main([str(speech_wav)]) == 0
+
+    assert capsys.readouterr().out == (
+        "[client] phrase1\n"
+        '[suggestion] (dummy) Follow up on "phrase1"\n'
+    )
+
+
+def test_suggestions_can_be_turned_off(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('[suggester]\nengine = "off"\n')
+
+    assert main([str(speech_wav), "--config", str(config)]) == 0
 
     assert capsys.readouterr().out == "[client] phrase1\n"
 
@@ -152,7 +177,10 @@ def test_ctrl_c_finishes_what_was_heard_and_exits_cleanly(
 
     assert code == 0
     assert time.monotonic() - started < 15
-    assert capsys.readouterr().out == "[client] phrase1\n"
+    assert capsys.readouterr().out == (
+        "[client] phrase1\n"
+        '[suggestion] (dummy) Follow up on "phrase1"\n'
+    )
 
 
 def test_a_second_ctrl_c_forces_exit() -> None:
@@ -194,7 +222,6 @@ def test_a_closed_pipe_exits_quietly(
         raise BrokenPipeError
 
     monkeypatch.setattr("rt_speech.transcribe.run_pipeline", fail)
-    monkeypatch.setattr("rt_speech.transcribe._silence_stdout", lambda: None)
 
     assert main([str(speech_wav)]) == 0
 
@@ -229,3 +256,113 @@ def test_a_directory_as_config_is_a_clean_error(
     assert main([str(speech_wav), "--config", str(tmp_path)]) == 1
 
     assert str(tmp_path) in capsys.readouterr().err
+
+
+class SlowSuggester:
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+
+    async def suggest(self, turns: Sequence[Turn]) -> list[str]:
+        await asyncio.sleep(self.seconds)
+        return ["late"]
+
+
+def _pipeline_that_ends_with(
+    failure: Exception | None,
+) -> Callable[..., object]:
+    """Closes one Client Turn, gives background work a moment, then ends."""
+
+    async def fake(_source: object, _vad: object, _stt: object, _config: object, on_turn: Callable[[Turn], None], **_: object) -> None:
+        on_turn(Turn(Speaker.CLIENT, "phrase1", 0.0, 1.0))
+        await asyncio.sleep(0.01)
+        if failure is not None:
+            raise failure
+
+    return fake
+
+
+def test_the_last_suggestion_is_waited_for_at_the_end_of_a_run(
+    engine: FakeEngine,
+    speech_wav: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("rt_speech.transcribe.make_suggester", lambda _: SlowSuggester(0.1))
+    monkeypatch.setattr("rt_speech.transcribe.run_pipeline", _pipeline_that_ends_with(None))
+
+    assert main([str(speech_wav)]) == 0
+
+    assert "[suggestion] late\n" in capsys.readouterr().out
+
+
+def test_a_capture_failure_is_reported_without_waiting_for_a_suggestion(
+    engine: FakeEngine,
+    speech_wav: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("rt_speech.transcribe.make_suggester", lambda _: SlowSuggester(3.0))
+    monkeypatch.setattr(
+        "rt_speech.transcribe.run_pipeline", _pipeline_that_ends_with(OSError("device gone"))
+    )
+
+    started = time.monotonic()
+    code = main([str(speech_wav)])
+
+    assert code == 1
+    assert time.monotonic() - started < 2
+    assert "device gone" in capsys.readouterr().err
+
+
+def test_a_closed_pipe_for_a_suggestion_does_not_hide_a_capture_failure(
+    engine: FakeEngine,
+    speech_wav: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def closed_pipe(_: str) -> None:
+        raise BrokenPipeError
+
+    monkeypatch.setattr("rt_speech.transcribe._print_suggestion", closed_pipe)
+    monkeypatch.setattr(
+        "rt_speech.transcribe.run_pipeline", _pipeline_that_ends_with(OSError("device gone"))
+    )
+
+    assert main([str(speech_wav)]) == 1
+
+    assert "device gone" in capsys.readouterr().err
+
+
+def test_the_suggester_settings_reach_the_run(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text("[suggester]\ntimeout_seconds = 0.01\n")
+    monkeypatch.setattr("rt_speech.transcribe.make_suggester", lambda _: SlowSuggester(0.5))
+    monkeypatch.setattr("rt_speech.transcribe.run_pipeline", _pipeline_that_ends_with(None))
+
+    assert main([str(speech_wav), "--config", str(config)]) == 0
+
+    assert "[suggestion]" not in capsys.readouterr().out
+
+
+def test_a_failed_run_leaves_nothing_for_the_final_flush_to_trip_over(
+    engine: FakeEngine,
+    speech_wav: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A failed print stays in stdout's buffer. Flushing it at exit into a closed pipe
+    # would replace exit code 1 with 120 and add noise after the real error.
+    silenced: list[bool] = []
+    monkeypatch.setattr("rt_speech.transcribe._silence_stdout", lambda: silenced.append(True))
+    monkeypatch.setattr(
+        "rt_speech.transcribe.run_pipeline", _pipeline_that_ends_with(OSError("device gone"))
+    )
+
+    assert main([str(speech_wav)]) == 1
+
+    assert silenced == [True]

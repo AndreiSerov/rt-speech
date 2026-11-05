@@ -46,11 +46,28 @@ def test_the_committed_config_is_valid() -> None:
         ("[segmenter]\nmin_speech_ms = 17000\n", "min_speech_ms"),
         ("[segmenter]\nsilence_end_ms = 18000\n", "silence_end_ms"),
         ("[segmenter]\nspeech_start_frames = 600\n", "speech_start_frames"),
+        ('[suggester]\nengine = "gpt"\n', "engine"),
+        ("[suggester]\nrecent_turns = 0\n", "recent_turns"),
+        ("[suggester]\ntimeout_seconds = 0\n", "timeout_seconds"),
     ],
 )
 def test_bad_config_is_rejected(tmp_path: Path, content: str, expected: str) -> None:
     with pytest.raises(ConfigError, match=expected):
         load_config(write(tmp_path, content))
+
+
+def test_suggester_settings_are_loaded(tmp_path: Path) -> None:
+    path = write(
+        tmp_path, '[suggester]\nengine = "off"\nrecent_turns = 3\ntimeout_seconds = 2.5\n'
+    )
+
+    suggester = load_config(path).suggester
+
+    assert (suggester.engine, suggester.recent_turns, suggester.timeout_seconds) == (
+        "off",
+        3,
+        2.5,
+    )
 
 
 def test_a_non_utf8_file_is_rejected(tmp_path: Path) -> None:
