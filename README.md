@@ -149,7 +149,7 @@ The Swift tests run with `swift test --package-path native/capture`, and the tes
 
 ```
 [client] Можно ли получить скидку для небольшой команды?
-[suggestion] (dummy) Follow up on "...получить скидку для небольшой команды?"
+[suggestion] (dummy) Follow up on "...ли получить скидку для небольшой команды?"
 ```
 
 Settings are under `[suggester]` in `config.toml`:
@@ -160,4 +160,4 @@ Settings are under `[suggester]` in `config.toml`:
 | `recent_turns` | How many Turns a Suggestion is based on. |
 | `timeout_seconds` | How long to wait for a Suggestion before giving up. |
 
-To add a real model, implement `Suggester` in `src/rt_speech/suggester.py` and add it to `make_suggester`.
+To add a real model, implement `Suggester` in `src/rt_speech/suggester.py`, add it to `make_suggester`, and add its name to `engine` in `config.py`.

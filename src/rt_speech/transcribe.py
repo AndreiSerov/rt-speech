@@ -70,8 +70,7 @@ async def _run(source: AudioSource, transcriber: Transcriber, config: Config) ->
     suggestions = SuggestionTrigger(
         make_suggester(config.suggester),
         _print_suggestion,
-        recent_turns=config.suggester.recent_turns,
-        timeout_seconds=config.suggester.timeout_seconds,
+        config.suggester,
     )
 
     def on_turn(turn: Turn) -> None:
@@ -80,8 +79,11 @@ async def _run(source: AudioSource, transcriber: Transcriber, config: Config) ->
 
     try:
         await run_pipeline(source, SileroVad, transcriber, config, on_turn, stop=stop)
-    finally:
-        await suggestions.finish()
+    except BaseException:
+        # A failure is reported at once, and nothing may replace it.
+        suggestions.cancel()
+        raise
+    await suggestions.finish()
 
 
 def run_and_print(source: AudioSource, config: Config) -> int:

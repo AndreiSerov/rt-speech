@@ -1,10 +1,12 @@
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable, Sequence
 
 import pytest
 
-from rt_speech.suggester import DummySuggester, SuggestionTrigger
+from rt_speech.config import SuggesterConfig
+from rt_speech.suggester import DummySuggester, SuggestionTrigger, make_suggester
 from rt_speech.turns import Speaker, Turn
 
 TIMEOUT = 5.0
@@ -29,7 +31,9 @@ def make_trigger(
     suggester: FakeSuggester, shown: list[str], recent_turns: int = 10
 ) -> SuggestionTrigger:
     return SuggestionTrigger(
-        suggester, shown.append, recent_turns=recent_turns, timeout_seconds=TIMEOUT
+        suggester,
+        shown.append,
+        SuggesterConfig(recent_turns=recent_turns, timeout_seconds=TIMEOUT),
     )
 
 
@@ -173,7 +177,7 @@ def test_a_suggester_that_never_answers_times_out_so_finish_returns(
 
     async def main() -> None:
         trigger = SuggestionTrigger(
-            HeldSuggester(), shown.append, recent_turns=10, timeout_seconds=0.01
+            HeldSuggester(), shown.append, SuggesterConfig(timeout_seconds=0.01)
         )
         trigger.on_turn(client("first"))
         await trigger.finish()
@@ -215,7 +219,7 @@ def test_failing_output_is_raised_by_finish() -> None:
 
 def make_trigger_with_output(output: Callable[[str], None]) -> SuggestionTrigger:
     return SuggestionTrigger(
-        FakeSuggester(), output, recent_turns=10, timeout_seconds=TIMEOUT
+        FakeSuggester(), output, SuggesterConfig(timeout_seconds=TIMEOUT)
     )
 
 
@@ -233,3 +237,115 @@ def test_the_dummy_stays_short_on_a_long_turn() -> None:
     assert asyncio.run(DummySuggester().suggest([client(words)])) == [
         '(dummy) Follow up on "...w94 w95 w96 w97 w98 w99"'
     ]
+
+
+def test_every_suggestion_is_shown_in_order() -> None:
+    class Two(FakeSuggester):
+        async def suggest(self, turns: Sequence[Turn]) -> list[str]:
+            return ["one", "two"]
+
+    shown: list[str] = []
+
+    async def main() -> None:
+        trigger = make_trigger(Two(), shown)
+        trigger.on_turn(client("hello"))
+        await trigger.finish()
+
+    asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+    assert shown == ["one", "two"]
+
+
+def test_a_replaced_suggestion_stays_hidden_even_if_it_ignores_the_cancel() -> None:
+    class IgnoresCancel(FakeSuggester):
+        async def suggest(self, turns: Sequence[Turn]) -> list[str]:
+            first = not self.calls
+            self.calls.append(list(turns))
+            if first:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.Event().wait()
+            return [f"reply to {turns[-1].text}"]
+
+    shown: list[str] = []
+
+    async def main() -> None:
+        trigger = make_trigger(IgnoresCancel(), shown)
+        trigger.on_turn(client("first"))
+        await asyncio.sleep(0)
+        trigger.on_turn(client("second"))
+        await asyncio.sleep(0.01)
+        await trigger.finish()
+
+    asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+    assert shown == ["reply to second"]
+
+
+def test_cancel_stops_the_suggestion_in_progress() -> None:
+    shown: list[str] = []
+
+    async def main() -> None:
+        suggester = HeldSuggester()
+        trigger = make_trigger(suggester, shown)
+        trigger.on_turn(client("first"))
+        await asyncio.sleep(0)
+        trigger.cancel()
+        suggester.release.set()
+        await asyncio.sleep(0.01)
+
+    asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+    assert shown == []
+
+
+def test_a_suggester_returning_nonsense_is_logged_as_a_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class ReturnsNone(FakeSuggester):
+        async def suggest(self, turns: Sequence[Turn]) -> list[str]:
+            return None  # type: ignore[return-value]
+
+    async def main() -> None:
+        trigger = make_trigger(ReturnsNone(), [])
+        trigger.on_turn(client("first"))
+        await trigger.finish()
+
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+    assert "Suggester failed" in caplog.text
+
+
+def test_a_timeout_inside_the_suggester_is_reported_as_a_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A connection timing out says nothing about our own limit having passed.
+    class ConnectTimeout(FakeSuggester):
+        async def suggest(self, turns: Sequence[Turn]) -> list[str]:
+            raise TimeoutError("connect timed out")
+
+    async def main() -> None:
+        trigger = make_trigger(ConnectTimeout(), [])
+        trigger.on_turn(client("first"))
+        await trigger.finish()
+
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+    assert "connect timed out" in caplog.text
+
+
+def test_off_logs_nothing_and_shows_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    shown: list[str] = []
+
+    async def main() -> None:
+        config = SuggesterConfig(engine="off")
+        trigger = SuggestionTrigger(make_suggester(config), shown.append, config)
+        trigger.on_turn(client("first"))
+        await trigger.finish()
+
+    with caplog.at_level(logging.INFO):
+        asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+    assert shown == []
+    assert caplog.text == ""

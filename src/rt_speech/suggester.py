@@ -19,7 +19,9 @@ class Suggester(Protocol):
     async def suggest(self, turns: Sequence[Turn]) -> list[str]:
         """Returns short Suggestions from recent Turns, oldest first. The last one is
         the Client Turn that just closed. It must not block the event loop, or Turns
-        stop too. May raise; the failure is logged and the call goes on."""
+        stop too, and must stop when cancelled, or finishing a run waits on it. Work
+        moved to a thread can't be cancelled, so it needs its own limit. May raise; the
+        failure is logged and the call goes on."""
         ...
 
 
@@ -40,7 +42,7 @@ class _NoSuggester:
 
 
 def make_suggester(config: SuggesterConfig) -> Suggester:
-    return DummySuggester() if config.engine == "dummy" else _NoSuggester()
+    return {"dummy": DummySuggester, "off": _NoSuggester}[config.engine]()
 
 
 class SuggestionTrigger:
@@ -51,14 +53,12 @@ class SuggestionTrigger:
         self,
         suggester: Suggester,
         on_suggestion: Callable[[str], None],
-        *,
-        recent_turns: int,
-        timeout_seconds: float,
+        config: SuggesterConfig,
     ) -> None:
         self._suggester = suggester
         self._on_suggestion = on_suggestion
-        self._timeout = timeout_seconds
-        self._recent: deque[Turn] = deque(maxlen=recent_turns)
+        self._timeout = config.timeout_seconds
+        self._recent: deque[Turn] = deque(maxlen=config.recent_turns)
         self._running: asyncio.Task[None] | None = None
         self._output_failure: Exception | None = None
 
@@ -71,8 +71,14 @@ class SuggestionTrigger:
             self._running.cancel()
         self._running = asyncio.create_task(self._suggest(tuple(self._recent)))
 
+    def cancel(self) -> None:
+        """Abandons the Suggestion in progress."""
+        if self._running is not None:
+            self._running.cancel()
+            self._running = None
+
     async def finish(self) -> None:
-        """Waits for the Suggestion in progress, at most until its timeout."""
+        """Waits for the Suggestion in progress, until its timeout at most."""
         if self._running is not None:
             await asyncio.wait([self._running])
         self._raise_output_failure()
@@ -83,18 +89,21 @@ class SuggestionTrigger:
 
     async def _suggest(self, turns: Sequence[Turn]) -> None:
         started = time.monotonic()
+        limit = asyncio.timeout(self._timeout)
         try:
-            async with asyncio.timeout(self._timeout):
-                suggestions = await self._suggester.suggest(turns)
-        except TimeoutError:
-            logger.warning("Suggester timed out after %.1f s", self._timeout)
-            return
+            async with limit:
+                suggestions = list(await self._suggester.suggest(turns))
         except Exception:
-            logger.exception("Suggester failed")
+            if limit.expired():
+                logger.warning("Suggester timed out after %.1f s", self._timeout)
+            else:
+                logger.exception("Suggester failed")
             return
-        logger.info(
-            "Got %d Suggestions in %.2f s", len(suggestions), time.monotonic() - started
-        )
+        # A Suggester that ignored being replaced must not show its stale answer.
+        if asyncio.current_task() is not self._running:
+            return
+        if suggestions:
+            logger.info("Suggester answered in %.2f s", time.monotonic() - started)
         try:
             for suggestion in suggestions:
                 self._on_suggestion(suggestion)
