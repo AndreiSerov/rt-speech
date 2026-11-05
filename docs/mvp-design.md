@@ -72,6 +72,15 @@ The Swift CLI writes logs to stderr, and fixed-size records to stdout, resampled
 
 Python reads this on a dedicated task that only moves frames, so slow STT can't stall capture.
 
+## Keeping capture alive
+
+A call outlasts any one device, so the Swift CLI stays up through device changes:
+
+- A Stream with no audio for over 1 s gets silence, up to 0.5 s behind the clock, and a log line. Its clock keeps moving, so an open Segment or Turn can close. Gaps of any length are filled the same way when audio returns, so speech on either side stays apart.
+- The microphone restarts on a new `AVAudioEngine` after a device change, retrying every second. The old engine stays silent after the change.
+- System audio restarts its stream after a failure, retrying every 2 s. Stopping it from the macOS menu bar or losing the permission still ends the run.
+- ScreenCaptureKit offers audio only through a display, so **system audio isn't heard while every display is off**. While capturing system audio, the CLI stops the display from idling off. Locking the screen or sleeping the Mac still stops system audio.
+
 ## Milestones
 
 Stop after each and report what works, what doesn't, and the main risks (latency, hallucinations, language flips).
@@ -102,12 +111,23 @@ These use speech synthesized by macOS `say`, so accuracy on real calls is still 
 - **large-v3-turbo reports `no_speech_prob` 0.0 even on pure silence, and invents text with high confidence: "Продолжение следует..." in Russian, and "Thank you." in English.** The `no_speech_prob` rule therefore never fires on this model. large-v3 (0.61-0.84) and tiny (0.85-0.89) do report it.
 - Silero is the real protection: 0 of 937 frames counted as voiced in each of five 30 s signals of silence, noise and hum. Filler phrases catch what remains on near-silence. Noise or music that Silero does accept could still produce invented text.
 
+Live capture, playing a `say` phrase through the speakers at low volume:
+
+- A Russian phrase came through word for word as a Client Turn 1.27 s after playback ended, including the pause that closes the Turn.
+- ScreenCaptureKit keeps delivering frames during silence, so the system Stream's clock keeps advancing.
+- Over 24 s neither Stream had a timestamp step above 32 ms.
+- On real speech, 1.4-8.5 s Segments took 0.21-0.42 s to transcribe. System audio read well, including mixed Russian and English ("trade-off", "accuracy"). The microphone over AirPods, in their 24 kHz Bluetooth mode, got counting right but garbled the words after it, differently each time. The same phrase came through clearly on the MacBook microphone, in one try.
+- An early version lost the microphone for 643.8 s across AirPods changes, and the whole capture when the display turned off. With the same changes, the current one restarted the microphone within a second each time, and system audio one second after the display came back. See "Keeping capture alive".
+
 ## Risks to measure
 
 - STT speed and CPU/GPU load on real audio (milestone 3)
 - Language flips with `auto` (milestone 3)
 - Clock drift between the two audio devices on long calls (milestone 4)
 - Without headphones, the Client's words can also appear as Me.
+- macOS can make AirPods the default input whenever they connect, and speech from their microphone transcribes badly. Capture follows the default input, so choose the MacBook microphone in Sound settings.
 - Non-call audio on the computer counts as the Client.
 - A cap split landing just after speech ends can shorten that Segment's post-roll. It's rare, and it only removes audio after the last voiced frame.
-- Segment timing assumes frames are contiguous. Live capture must handle dropped frames (milestone 4).
+- If the Python side stops reading, such as when the terminal is paused, the Swift CLI's write queue grows by about 650 MB an hour. Nothing is lost, and nothing limits it.
+- A multi-channel interface with plain numbered channels is heard through its first channel only.
+- Audio arriving over 1 s late overlaps the silence that filled its place, and that part is lost. Measured delivery delays stayed under 0.4 s.

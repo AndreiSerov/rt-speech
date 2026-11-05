@@ -17,3 +17,9 @@ wheels/
 *.egg-info
 .venv/
 .env
+
+### Swift ###
+.build/
+
+### IDE ###
+.idea/

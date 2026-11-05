@@ -11,7 +11,7 @@ This is an early MVP. See [the design](docs/mvp-design.md) for the milestones an
 | 1. Scaffold, config, `AudioSource`, `FileSource` | Done |
 | 2. Segmenter and debug CLI | Done |
 | 3. STT worker and turn aggregator | Done |
-| 4. Swift capture and `MacCaptureSource` | Not started |
+| 4. Swift capture and `MacCaptureSource` | Done |
 | 5. `Suggester` stub | Not started |
 
 ## Setup
@@ -101,3 +101,44 @@ uv run --extra mlx python -m rt_speech.transcribe call.wav --stream-label system
 Turns go to stdout and logs go to stderr, so add `2>/dev/null` to see only the Turns. Press Ctrl-C once to finish what was already heard, and again to quit at once.
 
 To use `faster-whisper`, set `engine = "faster-whisper"` under `[stt]` in `config.toml` and install its extra.
+
+### Milestone 4
+
+Live capture needs the Swift CLI, which you build with the Xcode command line tools:
+
+```sh
+swift build -c release --package-path native/capture
+```
+
+Then print speaker-tagged Turns from a live call, running from the repo root:
+
+```sh
+uv run --extra mlx python -m rt_speech.live
+```
+
+`--language` and `--config` work as in milestone 3. System audio is the Client and the microphone is Me. Press Ctrl-C once to finish what was already heard, and again to quit at once. Use headphones, or the Client's words can also appear as Me.
+
+Capture uses the macOS default input. Your speech transcribes much better from the MacBook microphone than from AirPods, so choose it under System Settings > Sound > Input. AirPods can stay as the output, but macOS may switch the input back when they reconnect.
+
+Capture survives device changes such as connecting AirPods, and logs when a Stream stops delivering. macOS offers system audio only while a display is on, so capture keeps the display from idling off. The Client still isn't heard if you lock the screen or put the Mac to sleep.
+
+#### Permissions
+
+macOS grants these to the app you run the command from, such as your terminal, not to `rt-capture`:
+
+| Permission | Where to allow it | Needed for |
+|---|---|---|
+| Screen & System Audio Recording | System Settings > Privacy & Security | System audio. No video is kept. |
+| Microphone | System Settings > Privacy & Security | Your side of the call. |
+
+macOS asks the first time. After allowing Screen Recording, quit and reopen the terminal app, because the permission only applies after a restart. A missing permission makes `live` exit with an error that names it.
+
+To check capture without any permission, or to test one device on its own:
+
+```sh
+native/capture/.build/release/rt-capture --test-signal --duration 1 | wc -c  # 127596
+native/capture/.build/release/rt-capture --no-mic > /dev/null     # system audio only; Ctrl-C to stop
+native/capture/.build/release/rt-capture --no-system > /dev/null  # microphone only; Ctrl-C to stop
+```
+
+The Swift tests run with `swift test --package-path native/capture`, and the test that uses the real devices runs with `uv run pytest -m manual tests/test_mac_capture.py`.

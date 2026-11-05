@@ -6,6 +6,9 @@ level = "INFO"  # DEBUG, INFO, WARNING or ERROR
 [replay]
 realtime = false  # true paces FileSource like live audio; false replays as fast as possible
 
+[capture]
+binary = "native/capture/.build/release/rt-capture"  # relative to where you run from
+
 [segmenter]
 voice_threshold = 0.5       # Silero score from which a frame counts as voiced
 speech_start_frames = 3     # consecutive voiced frames needed to enter speech
