@@ -48,3 +48,8 @@ filler_phrases = ["Спасибо за просмотр", "Субтитры сд
 
 [turns]
 pause_ms = 1800  # silence that closes a Turn
+
+[suggester]
+engine = "dummy"       # "dummy" prints placeholder Suggestions, "off" prints none
+recent_turns = 10      # how many Turns a Suggestion is based on
+timeout_seconds = 10   # how long to wait for one before giving up

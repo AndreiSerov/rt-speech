@@ -19,6 +19,7 @@ from rt_speech.pipeline import run_pipeline
 from rt_speech.silero_vad import SileroVad
 from rt_speech.stt import Transcriber
 from rt_speech.stt_engines import SttSetupError, make_transcriber
+from rt_speech.suggester import SuggestionTrigger, make_suggester
 from rt_speech.turns import Turn
 
 _INTERRUPTED = 130
@@ -30,6 +31,10 @@ def _silence_stdout() -> None:
 
 def _print_turn(turn: Turn) -> None:
     print(f"[{turn.speaker}] {turn.text}", flush=True)
+
+
+def _print_suggestion(suggestion: str) -> None:
+    print(f"[suggestion] {suggestion}", flush=True)
 
 
 def with_language(config: Config, language: str | None) -> Config:
@@ -62,7 +67,21 @@ async def _run(source: AudioSource, transcriber: Transcriber, config: Config) ->
     asyncio.get_running_loop().add_signal_handler(
         signal.SIGINT, InterruptHandler(stop, os._exit)
     )
-    await run_pipeline(source, SileroVad, transcriber, config, _print_turn, stop=stop)
+    suggestions = SuggestionTrigger(
+        make_suggester(config.suggester),
+        _print_suggestion,
+        recent_turns=config.suggester.recent_turns,
+        timeout_seconds=config.suggester.timeout_seconds,
+    )
+
+    def on_turn(turn: Turn) -> None:
+        _print_turn(turn)
+        suggestions.on_turn(turn)
+
+    try:
+        await run_pipeline(source, SileroVad, transcriber, config, on_turn, stop=stop)
+    finally:
+        await suggestions.finish()
 
 
 def run_and_print(source: AudioSource, config: Config) -> int:

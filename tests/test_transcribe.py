@@ -40,6 +40,23 @@ def test_a_file_prints_as_the_client_by_default(
 ) -> None:
     assert main([str(speech_wav)]) == 0
 
+    assert capsys.readouterr().out == (
+        "[client] phrase1\n"
+        '[suggestion] (dummy) Follow up on "phrase1"\n'
+    )
+
+
+def test_suggestions_can_be_turned_off(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('[suggester]\nengine = "off"\n')
+
+    assert main([str(speech_wav), "--config", str(config)]) == 0
+
     assert capsys.readouterr().out == "[client] phrase1\n"
 
 
@@ -152,7 +169,10 @@ def test_ctrl_c_finishes_what_was_heard_and_exits_cleanly(
 
     assert code == 0
     assert time.monotonic() - started < 15
-    assert capsys.readouterr().out == "[client] phrase1\n"
+    assert capsys.readouterr().out == (
+        "[client] phrase1\n"
+        '[suggestion] (dummy) Follow up on "phrase1"\n'
+    )
 
 
 def test_a_second_ctrl_c_forces_exit() -> None:

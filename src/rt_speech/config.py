@@ -92,6 +92,12 @@ class TurnsConfig(_Section):
     pause_ms: int = Field(default=1_800, gt=0)
 
 
+class SuggesterConfig(_Section):
+    engine: Literal["dummy", "off"] = "dummy"
+    recent_turns: int = Field(default=10, gt=0)
+    timeout_seconds: float = Field(default=10.0, gt=0)
+
+
 class CaptureConfig(_Section):
     binary: Path = Path("native/capture/.build/release/rt-capture")
 
@@ -102,6 +108,7 @@ class Config(_Section):
     replay: ReplayConfig = ReplayConfig()
     segmenter: SegmenterConfig = SegmenterConfig()
     stt: SttConfig = SttConfig()
+    suggester: SuggesterConfig = SuggesterConfig()
     turns: TurnsConfig = TurnsConfig()
 
 
