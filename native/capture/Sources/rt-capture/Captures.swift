@@ -83,6 +83,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     func start() async throws {
         do {
             try await startStream()
+            log("System audio capture started")
         } catch is NoDisplayError {
             log("System audio can't start until a display is on, usually after unlocking the Mac")
             restart()

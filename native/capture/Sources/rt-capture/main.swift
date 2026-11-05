@@ -124,7 +124,6 @@ Task {
             let capture = SystemAudioCapture(writer: writer, sessionStart: sessionStart)
             try await capture.start()
             systemCapture = capture
-            log("System audio capture started")
         }
     } catch let error as CapturePermissionError {
         fail(error.message, code: error.exitCode)
