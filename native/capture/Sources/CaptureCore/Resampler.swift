@@ -14,13 +14,27 @@ public final class Resampler {
 
     public init() {}
 
-    /// Plain numbered channels have no known meaning, and downmixing them silently gives
-    /// all zeros. For those, the first channel is used.
-    private static func canDownmix(_ format: AVAudioFormat) -> Bool {
-        guard format.channelCount > 1 else { return true }
-        guard let tag = format.channelLayout?.layoutTag else { return format.channelCount == 2 }
-        let kind = tag & 0xFFFF_0000
-        return kind != kAudioChannelLayoutTag_DiscreteInOrder && kind != kAudioChannelLayoutTag_Unknown
+    /// Channels that aren't speaker positions have no known meaning, and downmixing them
+    /// silently gives all zeros. For those, the first channel is used.
+    static func usesFirstChannelOnly(_ format: AVAudioFormat) -> Bool {
+        guard format.channelCount > 1 else { return false }
+        guard let layout = format.channelLayout else { return format.channelCount > 2 }
+        if layout.layoutTag == kAudioChannelLayoutTag_UseChannelDescriptions {
+            return !hasOnlySpeakerLabels(layout)
+        }
+        let kind = layout.layoutTag & 0xFFFF_0000
+        return kind == kAudioChannelLayoutTag_DiscreteInOrder || kind == kAudioChannelLayoutTag_Unknown
+    }
+
+    private static func hasOnlySpeakerLabels(_ layout: AVAudioChannelLayout) -> Bool {
+        let offset = MemoryLayout<AudioChannelLayout>.offset(of: \.mChannelDescriptions)!
+        let first = UnsafeRawPointer(layout.layout).advanced(by: offset)
+            .assumingMemoryBound(to: AudioChannelDescription.self)
+        let descriptions = UnsafeBufferPointer(
+            start: first, count: Int(layout.layout.pointee.mNumberChannelDescriptions))
+        return descriptions.allSatisfy {
+            (kAudioChannelLabel_Left..<kAudioChannelLabel_Discrete).contains($0.mChannelLabel)
+        }
     }
 
     public func convert(_ input: AVAudioPCMBuffer) throws -> [Float] {
@@ -28,10 +42,10 @@ public final class Resampler {
             guard let new = AVAudioConverter(from: input.format, to: target) else {
                 throw ResamplerError.unsupportedFormat("\(input.format)")
             }
-            if Self.canDownmix(input.format) {
-                new.downmix = true
-            } else {
+            if Self.usesFirstChannelOnly(input.format) {
                 new.channelMap = [0]
+            } else {
+                new.downmix = true
             }
             converter = new
         }

@@ -83,23 +83,58 @@ final class ResamplerTests: XCTestCase {
 
     func testAudioInterfacesWithoutAChannelLayoutStayAudible() throws {
         // USB interfaces can report plain numbered channels, which can't be downmixed.
-        for tag in [kAudioChannelLayoutTag_DiscreteInOrder | 2, kAudioChannelLayoutTag_DiscreteInOrder | 4] {
-            let channels = AVAudioChannelCount(tag & 0xFFFF)
-            let format = AVAudioFormat(
-                standardFormatWithSampleRate: 48000, channelLayout: AVAudioChannelLayout(layoutTag: tag)!)
-            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800)!
-            buffer.frameLength = 4800
-            // Only the first channel has a microphone connected.
-            for index in 0..<4800 {
-                buffer.floatChannelData![0][index] = Float(0.5 * sin(2 * .pi * 480 * Double(index) / 48000))
-            }
-
-            let resampler = Resampler()
-            var samples: [Float] = []
-            for _ in 0..<5 { samples += try resampler.convert(buffer) }
-
-            XCTAssertGreaterThan(samples.map(abs).max() ?? 0, 0.3, "\(channels) channels")
+        for tag in [
+            kAudioChannelLayoutTag_DiscreteInOrder | 2, kAudioChannelLayoutTag_DiscreteInOrder | 4,
+            kAudioChannelLayoutTag_Unknown | 2, kAudioChannelLayoutTag_Unknown | 4,
+        ] {
+            let layout = AVAudioChannelLayout(layoutTag: tag)!
+            XCTAssertGreaterThan(try peak(through: layout), 0.3, "layout tag \(tag)")
         }
+    }
+
+    func testChannelsDescribedOnlyByNumberStayAudible() throws {
+        for label in [kAudioChannelLabel_Discrete_0, kAudioChannelLabel_Unused, kAudioChannelLabel_Unknown] {
+            for channels in [2, 4] {
+                XCTAssertGreaterThan(
+                    try peak(through: describedLayout(labels: [AudioChannelLabel](repeating: label, count: channels))),
+                    0.3, "\(channels) channels labeled \(label)")
+            }
+        }
+    }
+
+    func testChannelsDescribedAsSpeakersStillMixTogether() throws {
+        let layout = describedLayout(labels: [kAudioChannelLabel_Left, kAudioChannelLabel_Right])
+        XCTAssertFalse(Resampler.usesFirstChannelOnly(AVAudioFormat(standardFormatWithSampleRate: 48000, channelLayout: layout)))
+    }
+
+    private func describedLayout(labels: [AudioChannelLabel]) -> AVAudioChannelLayout {
+        let size = MemoryLayout<AudioChannelLayout>.size + labels.count * MemoryLayout<AudioChannelDescription>.size
+        let raw = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: MemoryLayout<AudioChannelLayout>.alignment)
+        defer { raw.deallocate() }
+        raw.initializeMemory(as: UInt8.self, repeating: 0, count: size)
+        let layout = raw.assumingMemoryBound(to: AudioChannelLayout.self)
+        layout.pointee.mChannelLayoutTag = kAudioChannelLayoutTag_UseChannelDescriptions
+        layout.pointee.mNumberChannelDescriptions = UInt32(labels.count)
+        let descriptions = raw.advanced(by: MemoryLayout<AudioChannelLayout>.offset(of: \.mChannelDescriptions)!)
+            .assumingMemoryBound(to: AudioChannelDescription.self)
+        for (index, label) in labels.enumerated() {
+            descriptions[index].mChannelLabel = label
+        }
+        return AVAudioChannelLayout(layout: layout)
+    }
+
+    /// The loudest output when only the first channel has a microphone connected.
+    private func peak(through layout: AVAudioChannelLayout) throws -> Float {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channelLayout: layout)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800)!
+        buffer.frameLength = 4800
+        for index in 0..<4800 {
+            buffer.floatChannelData![0][index] = Float(0.5 * sin(2 * .pi * 480 * Double(index) / 48000))
+        }
+        let resampler = Resampler()
+        var samples: [Float] = []
+        for _ in 0..<5 { samples += try resampler.convert(buffer) }
+        return samples.map(abs).max() ?? 0
     }
 
     func testAChangedInputFormatIsHandled() throws {
