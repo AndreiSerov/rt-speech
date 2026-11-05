@@ -1,13 +1,16 @@
 [project]
 name = "rt-speech"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local live call copilot: speaker-tagged transcripts from system audio and the mic"
 readme = "README.md"
 authors = [
     { name = "Серов Андрей", email = "actsituation@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2.5.4",
+    "pydantic>=2.14.2",
+]
 
 [project.scripts]
 rt-speech = "rt_speech:main"
@@ -15,3 +18,13 @@ rt-speech = "rt_speech:main"
 [build-system]
 requires = ["uv_build>=0.10.7,<0.11.0"]
 build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -m 'not manual'"
+markers = ["manual: needs real audio hardware or permissions; run with -m manual"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
