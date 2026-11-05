@@ -81,6 +81,15 @@ def test_empty_file_yields_no_frames(tmp_path: Path) -> None:
     assert collect(FileSource([(path, Stream.MIC)])) == []
 
 
+def test_a_truncated_file_replays_what_is_there(tmp_path: Path) -> None:
+    path = write_wav(tmp_path / "a.wav", np.zeros(FRAME_SAMPLES * 2))
+    path.write_bytes(path.read_bytes()[:-1])
+
+    frames = collect(FileSource([(path, Stream.MIC)]))
+
+    assert len(frames) == 2
+
+
 def test_two_files_merge_by_timestamp_and_the_longer_one_continues(
     tmp_path: Path,
 ) -> None:

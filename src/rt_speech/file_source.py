@@ -3,7 +3,7 @@
 import asyncio
 import heapq
 import wave
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Iterator
 from pathlib import Path
 
 import numpy as np
@@ -48,7 +48,10 @@ def _read_frames(path: Path, stream: Stream) -> Iterator[Frame]:
     with wave.open(str(path), "rb") as wav:
         index = 0
         while data := wav.readframes(FRAME_SAMPLES):
-            samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+            # A truncated file can end in half a sample.
+            usable = len(data) - len(data) % _BYTES_PER_SAMPLE
+            samples = np.frombuffer(data[:usable], dtype="<i2").astype(np.float32)
+            samples /= 32768.0
             # Pad the last partial frame so its speech isn't lost.
             pcm = np.pad(samples, (0, FRAME_SAMPLES - samples.size))
             yield Frame(stream, pcm, index * FRAME_SAMPLES / SAMPLE_RATE)
@@ -76,7 +79,7 @@ class FileSource:
         self._inputs = inputs
         self._realtime = realtime
 
-    async def __aiter__(self) -> AsyncIterator[Frame]:
+    async def __aiter__(self) -> AsyncGenerator[Frame, None]:
         readers = [_read_frames(path, stream) for path, stream in self._inputs]
         merged = heapq.merge(*readers, key=lambda frame: frame.timestamp)
         loop = asyncio.get_running_loop()

@@ -1,7 +1,9 @@
 import asyncio
-from collections.abc import AsyncIterator
+import random
+from collections.abc import AsyncGenerator, AsyncIterator
 
 import numpy as np
+import pytest
 from numpy.typing import NDArray
 
 from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE, Frame, Stream
@@ -150,7 +152,7 @@ def test_a_long_monologue_is_split_at_the_cap_without_losing_audio() -> None:
     assert segments[0].start == 0.0
     assert segments[-1].end == 250 * FRAME_SECONDS
     for earlier, later in zip(segments, segments[1:], strict=False):
-        assert earlier.end == later.start
+        assert earlier.end == pytest.approx(later.start)
     assert sum(s.pcm.size for s in segments) == 250 * FRAME_SAMPLES
 
 
@@ -188,7 +190,7 @@ def test_the_piece_after_a_split_can_be_shorter_than_the_minimum() -> None:
     segments = run(levels, flush=False)
 
     assert len(segments) == 2
-    assert segments[1].start == segments[0].end
+    assert segments[1].start == pytest.approx(segments[0].end)
 
 
 def test_silence_after_a_split_closes_the_segment_normally() -> None:
@@ -275,3 +277,101 @@ def test_each_stream_gets_its_own_detector() -> None:
     asyncio.run(run_all())
 
     assert len(made) == 2
+
+
+def test_closing_the_segment_stream_closes_its_source_immediately() -> None:
+    # Live capture has a child process to stop, so this can't wait for a later tick.
+    closed = False
+
+    class ClosableSource:
+        async def __aiter__(self) -> AsyncGenerator[Frame, None]:
+            nonlocal closed
+            try:
+                for _ in range(1000):
+                    pcm = np.full(FRAME_SAMPLES, LOUD, dtype=np.float32)
+                    yield Frame(Stream.MIC, pcm, 0.0)
+            finally:
+                closed = True
+
+    async def run_all() -> bool:
+        stream = segment_stream(ClosableSource(), LoudnessDetector, CONFIG)
+        await anext(stream)
+        await stream.aclose()
+        return closed
+
+    assert asyncio.run(run_all())
+
+
+def test_speech_after_a_split_inside_a_pause_is_kept() -> None:
+    # The cap lands in a pause that never reaches silence_end_ms, so the short
+    # speech after it continues the same talk and isn't subject to the minimum.
+    levels = [LOUD] * 92 + [QUIET] * 8 + [LOUD] * 2 + [QUIET] * 20
+
+    segments = run(levels, flush=False)
+
+    assert segments[-1].end == 104 * FRAME_SECONDS
+
+
+def test_a_split_on_the_last_frame_of_the_cap_keeps_later_speech() -> None:
+    # A one-frame window can pick the final frame, leaving nothing open.
+    config = CONFIG.model_copy(update={"split_window_ms": 32})
+    levels = [STRONG] * 99 + [WEAK] + [STRONG] * 4 + [QUIET] * 20
+
+    segments = run(levels, config, flush=False)
+
+    assert segments[-1].end == 106 * FRAME_SECONDS
+
+
+def test_no_segment_is_only_silence() -> None:
+    # After a split in a pause, only silence remains until the Segment closes.
+    levels = [LOUD] * 92 + [QUIET] * 40
+
+    assert len(run(levels, flush=False)) == 1
+
+
+def test_end_is_exact_when_the_cap_is_reached_on_a_voiced_frame() -> None:
+    levels = [STRONG] * 85 + [WEAK] * 3 + [STRONG] * 12 + [QUIET] * 20
+
+    segments = run(levels, flush=False)
+
+    assert segments[-1].end == 102 * FRAME_SECONDS
+
+
+def test_a_new_segment_can_reuse_silence_left_over_from_the_last_one() -> None:
+    # First Segment keeps frames up to 12; 12..19 stay available as pre-roll.
+    levels = [LOUD] * 10 + [QUIET] * 10 + [LOUD] * 10 + [QUIET] * 20
+
+    _, second = run(levels, flush=False)
+
+    assert second.start == 15 * FRAME_SECONDS
+
+
+def test_a_single_voiced_frame_after_a_segment_does_not_start_speech() -> None:
+    config = CONFIG.model_copy(update={"min_speech_ms": 0})
+    levels = [LOUD] * 10 + [QUIET] * 15 + [LOUD] + [QUIET] * 30
+
+    assert len(run(levels, config, flush=False)) == 1
+
+
+@pytest.mark.parametrize("seed", range(50))
+def test_sustained_speech_is_never_lost_and_cuts_never_overlap(seed: int) -> None:
+    rng = random.Random(seed)
+    levels: list[float] = []
+    sustained: list[int] = []
+    for _ in range(40):
+        pause = rng.randint(0, 25)
+        levels += [QUIET] * pause
+        talk = rng.randint(1, 60)
+        if talk >= 5:
+            sustained += range(len(levels), len(levels) + talk)
+        levels += [rng.choice([STRONG, WEAK]) for _ in range(talk)]
+
+    segments = run(levels)
+
+    for earlier, later in zip(segments, segments[1:], strict=False):
+        assert earlier.end <= later.start + 1e-9  # Float rounding at a shared edge.
+    assert all(s.pcm.size <= 100 * FRAME_SAMPLES for s in segments)
+    covered = [
+        any(s.start <= i * FRAME_SECONDS < s.end for s in segments) for i in sustained
+    ]
+    assert all(covered)

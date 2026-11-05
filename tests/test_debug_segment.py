@@ -46,13 +46,70 @@ def test_rerunning_replaces_earlier_segments_only(
 ) -> None:
     out = tmp_path / "segments"
     out.mkdir()
-    (out / "segment_0099_old.wav").write_bytes(b"stale")
+    old_cut = out / "segment_0099_1.000s-2.000s.wav"
+    old_cut.write_bytes(b"stale")
+    own_file = out / "segment_notes.wav"
+    own_file.write_bytes(b"mine")
     (out / "notes.txt").write_text("keep me")
 
     assert main([str(speech_wav), "--out", str(out)]) == 0
 
-    assert not (out / "segment_0099_old.wav").exists()
+    assert not old_cut.exists()
+    assert own_file.exists()
     assert (out / "notes.txt").exists()
+
+
+def test_segments_hold_the_input_samples_exactly(
+    speech_wav: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "segments"
+
+    assert main([str(speech_wav), "--out", str(out)]) == 0
+
+    with wave.open(str(speech_wav), "rb") as wav:
+        original = np.frombuffer(wav.readframes(wav.getnframes()), "<i2")
+    first = sorted(out.glob("*.wav"))[0]
+    start = float(first.stem.split("_")[2].split("s-")[0])
+    with wave.open(str(first), "rb") as wav:
+        cut = np.frombuffer(wav.readframes(wav.getnframes()), "<i2")
+    offset = round(start * SAMPLE_RATE)
+    expected = original[offset : offset + cut.size]
+    assert np.array_equal(cut[: expected.size], expected)
+    assert not cut[expected.size :].any()  # Only the last frame's padding is extra.
+
+
+def test_an_input_that_is_an_earlier_cut_is_refused_and_kept(
+    speech_wav: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "segments"
+    assert main([str(speech_wav), "--out", str(out)]) == 0
+    cut = sorted(out.glob("*.wav"))[0]
+
+    assert main([str(cut), "--out", str(out)]) == 1
+
+    assert cut.exists()
+    assert "--out" in capsys.readouterr().err
+
+
+def test_a_failed_run_keeps_earlier_cuts(
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "segments"
+    assert main([str(speech_wav), "--out", str(out)]) == 0
+    before = sorted(out.iterdir())
+
+    def fail() -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("rt_speech.debug_segment.SileroVad", fail)
+
+    assert main([str(speech_wav), "--out", str(out)]) == 1
+
+    assert sorted(out.iterdir()) == before
+    assert "disk full" in capsys.readouterr().err
 
 
 def test_a_bad_input_file_is_a_clean_error(

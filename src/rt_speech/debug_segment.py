@@ -5,7 +5,9 @@ Usage: python -m rt_speech.debug_segment input.wav --out segments/
 
 import argparse
 import asyncio
+import re
 import sys
+import tempfile
 import wave
 from collections.abc import Sequence
 from pathlib import Path
@@ -19,9 +21,11 @@ from rt_speech.logging_setup import setup_logging
 from rt_speech.segmenter import Segment, segment_stream
 from rt_speech.silero_vad import SileroVad
 
+_CUT_NAME = re.compile(r"segment_\d{4}_\d+\.\d{3}s-\d+\.\d{3}s\.wav")
+
 
 def _write_wav(path: Path, segment: Segment) -> None:
-    samples = np.clip(segment.pcm, -1.0, 1.0) * 32767
+    samples = np.clip(np.round(segment.pcm * 32768), -32768, 32767)
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
@@ -39,6 +43,29 @@ async def _dump(source: FileSource, config: Config, out: Path) -> int:
     return count
 
 
+def _is_earlier_cut(path: Path) -> bool:
+    return _CUT_NAME.fullmatch(path.name) is not None
+
+
+def _run(input_path: Path, out: Path, config: Config) -> int:
+    source = FileSource([(input_path, Stream.SYSTEM)], realtime=config.replay.realtime)
+    if input_path.resolve().parent == out.resolve() and _is_earlier_cut(input_path):
+        raise FileSourceError(
+            f"{input_path} would be replaced by this run. Choose a different --out."
+        )
+    out.mkdir(parents=True, exist_ok=True)
+    # Cuts are staged, so a failed run can't lose the previous ones.
+    with tempfile.TemporaryDirectory(dir=out, prefix=".staging-") as staging:
+        staged = Path(staging)
+        count = asyncio.run(_dump(source, config, staged))
+        for old in out.iterdir():
+            if old.is_file() and _is_earlier_cut(old):
+                old.unlink()
+        for new in staged.iterdir():
+            new.replace(out / new.name)
+    return count
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="16 kHz mono 16-bit WAV file")
@@ -49,19 +76,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = load_config(args.config)
         setup_logging(config.logging.level)
-        source = FileSource(
-            [(args.input, Stream.SYSTEM)], realtime=config.replay.realtime
-        )
-        args.out.mkdir(parents=True, exist_ok=True)
+        count = _run(args.input, args.out, config)
     except (ConfigError, FileSourceError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
-    # Earlier cuts would otherwise mix with these when comparing thresholds.
-    for old in args.out.glob("segment_*.wav"):
-        old.unlink()
-
-    count = asyncio.run(_dump(source, config, args.out))
     print(f"{count} segment(s) in {args.out}")
     return 0
 

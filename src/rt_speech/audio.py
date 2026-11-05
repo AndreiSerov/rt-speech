@@ -1,6 +1,6 @@
 """The audio contract the whole pipeline depends on."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from enum import StrEnum
 from typing import NamedTuple, Protocol
 
@@ -20,7 +20,8 @@ class Stream(StrEnum):
 class Frame(NamedTuple):
     stream: Stream
     pcm: NDArray[np.float32]
-    """Exactly FRAME_SAMPLES mono samples in [-1, 1]."""
+    """Exactly FRAME_SAMPLES mono samples in [-1, 1]. Consumers may keep this array,
+    so a source must never reuse its buffer for a later frame."""
     timestamp: float
     """Start of the frame, in seconds since a session start shared by all streams."""
 
@@ -28,4 +29,4 @@ class Frame(NamedTuple):
 class AudioSource(Protocol):
     """Anything that produces frames: a replayed file or live capture."""
 
-    def __aiter__(self) -> AsyncIterator[Frame]: ...
+    def __aiter__(self) -> AsyncGenerator[Frame, None]: ...

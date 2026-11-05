@@ -2,6 +2,7 @@
 
 from collections import deque
 from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -96,7 +97,7 @@ class Segmenter:
 
     def _close(self) -> list[Segment]:
         """Ends the open Segment. Frames past the post-roll stay available as pre-roll."""
-        end = self._last_voiced + 1 + self._postroll_frames
+        end = max(self._last_voiced + 1 + self._postroll_frames, 0)
         segments = self._emit(self._frames[:end], self._voiced[:end])
         self._recent.extend(self._frames[end:])
         self._frames, self._voiced = [], []
@@ -104,18 +105,13 @@ class Segmenter:
         return segments
 
     def _split(self) -> list[Segment]:
-        """Cuts at the quietest point near the cap, and keeps the rest open."""
+        """Cuts at the quietest point near the cap. The rest stays open even if it's
+        silent so far, because the pause hasn't yet reached silence_end_ms."""
         cut = self._quietest_cut()
         segments = self._emit(self._frames[:cut], self._voiced[:cut])
-        rest, rest_voiced = self._frames[cut:], self._voiced[cut:]
-        if any(rest_voiced):
-            self._frames, self._voiced = rest, rest_voiced
-            self._last_voiced -= cut
-            self._continuation = True
-        else:
-            self._recent.extend(rest)
-            self._frames, self._voiced = [], []
-            self._continuation = False
+        self._frames, self._voiced = self._frames[cut:], self._voiced[cut:]
+        self._last_voiced -= cut
+        self._continuation = True
         return segments
 
     def _quietest_cut(self) -> int:
@@ -124,15 +120,17 @@ class Segmenter:
         window = min(self._window_frames, len(search))
         smoothed = np.convolve(energy, np.ones(window) / window, mode="valid")
         offset = len(self._frames) - len(search)
-        return offset + int(np.argmin(smoothed)) + window // 2 + 1
+        cut = offset + int(np.argmin(smoothed)) + window // 2 + 1
+        return min(cut, len(self._frames) - 1)  # Always leave a frame open.
 
     def _emit(self, frames: list[Frame], voiced: list[bool]) -> list[Segment]:
+        if not any(voiced):
+            return []
         # Measured on speech alone: pre-roll would make every Segment long enough.
-        if not self._continuation and any(voiced):
-            first = voiced.index(True)
-            last = len(voiced) - 1 - voiced[::-1].index(True)
-            if last - first + 1 < self._min_speech_frames:
-                return []
+        first = voiced.index(True)
+        last = len(voiced) - 1 - voiced[::-1].index(True)
+        if not self._continuation and last - first + 1 < self._min_speech_frames:
+            return []
         return [
             Segment(
                 self._stream,
@@ -150,13 +148,15 @@ async def segment_stream(
 ) -> AsyncIterator[Segment]:
     """Segments every Stream in `source`, each with its own detector and state."""
     segmenters: dict[Stream, Segmenter] = {}
-    async for frame in source:
-        segmenter = segmenters.get(frame.stream)
-        if segmenter is None:
-            segmenter = Segmenter(frame.stream, make_detector(), config)
-            segmenters[frame.stream] = segmenter
-        for segment in segmenter.feed(frame):
-            yield segment
+    # aclosing: stopping early must stop the source now, such as a capture process.
+    async with aclosing(aiter(source)) as frames:
+        async for frame in frames:
+            segmenter = segmenters.get(frame.stream)
+            if segmenter is None:
+                segmenter = Segmenter(frame.stream, make_detector(), config)
+                segmenters[frame.stream] = segmenter
+            for segment in segmenter.feed(frame):
+                yield segment
     for segmenter in segmenters.values():
         for segment in segmenter.flush():
             yield segment

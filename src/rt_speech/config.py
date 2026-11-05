@@ -6,6 +6,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE
+
 
 class _Section(BaseModel):
     # Unknown keys are errors: a mistyped threshold must not silently use its default.
@@ -33,12 +35,16 @@ class SegmenterConfig(_Section):
 
     @model_validator(mode="after")
     def _check_cap_fits(self) -> Self:
-        if self.split_search_ms > self.max_segment_ms:
-            raise ValueError("split_search_ms can't exceed max_segment_ms")
         if self.split_window_ms > self.split_search_ms:
             raise ValueError("split_window_ms can't exceed split_search_ms")
-        if self.preroll_ms >= self.max_segment_ms:
-            raise ValueError("preroll_ms must be below max_segment_ms")
+        # A cut must never land before enough speech to pass the minimum.
+        start_ms = self.speech_start_frames * FRAME_SAMPLES * 1000 / SAMPLE_RATE
+        needed = self.preroll_ms + start_ms + self.min_speech_ms + self.split_search_ms
+        if needed > self.max_segment_ms:
+            raise ValueError(
+                "preroll_ms + speech_start_frames + min_speech_ms + split_search_ms "
+                "must fit within max_segment_ms"
+            )
         return self
 
 
@@ -58,5 +64,5 @@ def load_config(path: Path) -> Config:
             return Config.model_validate(tomllib.load(f))
     except FileNotFoundError:
         raise ConfigError(f"{path}: file not found") from None
-    except (tomllib.TOMLDecodeError, ValidationError) as e:
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError, ValidationError) as e:
         raise ConfigError(f"{path}: {e}") from e
