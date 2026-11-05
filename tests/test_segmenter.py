@@ -315,11 +315,12 @@ def test_speech_after_a_split_inside_a_pause_is_kept() -> None:
 def test_a_split_on_the_last_frame_of_the_cap_keeps_later_speech() -> None:
     # A one-frame window can pick the final frame, leaving nothing open.
     config = CONFIG.model_copy(update={"split_window_ms": 32})
-    levels = [STRONG] * 99 + [WEAK] + [STRONG] * 4 + [QUIET] * 20
+    # Two voiced frames are too few to start speech again from idle.
+    levels = [STRONG] * 99 + [WEAK] + [STRONG] * 2 + [QUIET] * 20
 
     segments = run(levels, config, flush=False)
 
-    assert segments[-1].end == 106 * FRAME_SECONDS
+    assert segments[-1].end == 104 * FRAME_SECONDS
 
 
 def test_no_segment_is_only_silence() -> None:
