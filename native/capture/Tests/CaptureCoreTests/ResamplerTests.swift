@@ -81,6 +81,27 @@ final class ResamplerTests: XCTestCase {
         XCTAssertEqual(Double(total), 80000, accuracy: 400)
     }
 
+    func testAudioInterfacesWithoutAChannelLayoutStayAudible() throws {
+        // USB interfaces can report plain numbered channels, which can't be downmixed.
+        for tag in [kAudioChannelLayoutTag_DiscreteInOrder | 2, kAudioChannelLayoutTag_DiscreteInOrder | 4] {
+            let channels = AVAudioChannelCount(tag & 0xFFFF)
+            let format = AVAudioFormat(
+                standardFormatWithSampleRate: 48000, channelLayout: AVAudioChannelLayout(layoutTag: tag)!)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800)!
+            buffer.frameLength = 4800
+            // Only the first channel has a microphone connected.
+            for index in 0..<4800 {
+                buffer.floatChannelData![0][index] = Float(0.5 * sin(2 * .pi * 480 * Double(index) / 48000))
+            }
+
+            let resampler = Resampler()
+            var samples: [Float] = []
+            for _ in 0..<5 { samples += try resampler.convert(buffer) }
+
+            XCTAssertGreaterThan(samples.map(abs).max() ?? 0, 0.3, "\(channels) channels")
+        }
+    }
+
     func testAChangedInputFormatIsHandled() throws {
         // Plugging in a headset can change the mic's format mid-call.
         let resampler = Resampler()

@@ -14,12 +14,25 @@ public final class Resampler {
 
     public init() {}
 
+    /// Plain numbered channels have no known meaning, and downmixing them silently gives
+    /// all zeros. For those, the first channel is used.
+    private static func canDownmix(_ format: AVAudioFormat) -> Bool {
+        guard format.channelCount > 1 else { return true }
+        guard let tag = format.channelLayout?.layoutTag else { return format.channelCount == 2 }
+        let kind = tag & 0xFFFF_0000
+        return kind != kAudioChannelLayoutTag_DiscreteInOrder && kind != kAudioChannelLayoutTag_Unknown
+    }
+
     public func convert(_ input: AVAudioPCMBuffer) throws -> [Float] {
         if converter?.inputFormat != input.format {
             guard let new = AVAudioConverter(from: input.format, to: target) else {
                 throw ResamplerError.unsupportedFormat("\(input.format)")
             }
-            new.downmix = true
+            if Self.canDownmix(input.format) {
+                new.downmix = true
+            } else {
+                new.channelMap = [0]
+            }
             converter = new
         }
         guard let converter else { return [] }
