@@ -116,7 +116,7 @@ Live capture, playing a `say` phrase through the speakers at low volume:
 - A Russian phrase came through word for word as a Client Turn 1.27 s after playback ended, including the pause that closes the Turn.
 - ScreenCaptureKit keeps delivering frames during silence, so the system Stream's clock keeps advancing.
 - Over 24 s neither Stream had a timestamp step above 32 ms.
-- On real speech, 1.4-8.5 s Segments took 0.21-0.42 s to transcribe. System audio read well, including mixed Russian and English ("trade-off", "accuracy"). The microphone, over AirPods at the time, got counting right but garbled the words after it, differently each time. The cause isn't known yet.
+- On real speech, 1.4-8.5 s Segments took 0.21-0.42 s to transcribe. System audio read well, including mixed Russian and English ("trade-off", "accuracy"). The microphone over AirPods, in their 24 kHz Bluetooth mode, got counting right but garbled the words after it, differently each time. The same phrase came through clearly on the MacBook microphone, in one try.
 - An early version lost the microphone for 643.8 s across AirPods changes, and the whole capture when the display turned off. With the same changes, the current one restarted the microphone within a second each time, and system audio one second after the display came back. See "Keeping capture alive".
 
 ## Risks to measure
@@ -125,6 +125,7 @@ Live capture, playing a `say` phrase through the speakers at low volume:
 - Language flips with `auto` (milestone 3)
 - Clock drift between the two audio devices on long calls (milestone 4)
 - Without headphones, the Client's words can also appear as Me.
+- macOS can make AirPods the default input whenever they connect, and speech from their microphone transcribes badly. Capture follows the default input, so choose the MacBook microphone in Sound settings.
 - Non-call audio on the computer counts as the Client.
 - A cap split landing just after speech ends can shorten that Segment's post-roll. It's rare, and it only removes audio after the last voiced frame.
 - If the Python side stops reading, such as when the terminal is paused, the Swift CLI's write queue grows by about 650 MB an hour. Nothing is lost, and nothing limits it.

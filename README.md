@@ -118,6 +118,8 @@ uv run --extra mlx python -m rt_speech.live
 
 `--language` and `--config` work as in milestone 3. System audio is the Client and the microphone is Me. Press Ctrl-C once to finish what was already heard, and again to quit at once. Use headphones, or the Client's words can also appear as Me.
 
+Capture uses the macOS default input. Your speech transcribes much better from the MacBook microphone than from AirPods, so choose it under System Settings > Sound > Input. AirPods can stay as the output, but macOS may switch the input back when they reconnect.
+
 Capture survives device changes such as connecting AirPods, and logs when a Stream stops delivering. macOS offers system audio only while a display is on, so capture keeps the display from idling off. The Client still isn't heard if you lock the screen or put the Mac to sleep.
 
 #### Permissions
