@@ -38,14 +38,18 @@ public struct Record {
 /// Cuts one stream's audio into frames, timestamped on the clock shared by all streams.
 ///
 /// Timestamps come from counting samples, which is smooth, but are kept honest against
-/// the host clock that arrives with each buffer: gaps are filled with silence, because
-/// the pipeline treats frames as contiguous, and audio ahead of the clock is dropped,
-/// so device clock drift can't accumulate on a long call.
+/// the host clock that arrives with each buffer: gaps of any length are filled with
+/// silence, because the pipeline treats frames as contiguous, and audio ahead of the
+/// clock is dropped, so device clock drift can't accumulate on a long call. The host
+/// clock stops while a Mac sleeps, so sleep doesn't look like a gap.
 public final class FrameAssembler {
     /// Differences below this are normal delivery jitter.
     private static let toleratedDrift = 0.1
-    /// Gaps above this are a sleeping Mac, not lost audio, so the clock simply jumps.
-    private static let longestFilledGap = 5.0
+    /// A stream this far behind the clock has stopped delivering.
+    private static let stallSeconds = 1.0
+    /// A stall is filled only up to this far behind the clock, so audio that was merely
+    /// late still fits when it arrives.
+    private static let stallMargin = 0.5
 
     private let stream: CaptureStream
     private let sessionStart: Double
@@ -63,13 +67,8 @@ public final class FrameAssembler {
         let position = max(hostSeconds - sessionStart, 0)
         var incoming = samples[...]
         if let origin {
-            let expected = origin + Double(emitted * frameSamples + pending.count) / sampleRate
-            let gap = position - expected
-            if gap > Self.longestFilledGap {
-                self.origin = position
-                emitted = 0
-                pending.removeAll()
-            } else if gap > Self.toleratedDrift {
+            let gap = position - expected(from: origin)
+            if gap > Self.toleratedDrift {
                 pending.append(contentsOf: repeatElement(0, count: Int((gap * sampleRate).rounded())))
             } else if gap < -Self.toleratedDrift {
                 incoming = incoming.dropFirst(Int((-gap * sampleRate).rounded()))
@@ -79,6 +78,24 @@ public final class FrameAssembler {
         }
         pending.append(contentsOf: incoming)
         return takeWholeFrames()
+    }
+
+    /// Call regularly with the current host time. If the device has stopped delivering,
+    /// returns silence so this stream's clock keeps moving: an open Segment or Turn can
+    /// then close instead of waiting for the device to come back.
+    public func fillStall(hostSeconds: Double) -> [Record] {
+        guard let origin else { return [] }
+        let position = hostSeconds - sessionStart
+        let behind = position - expected(from: origin)
+        guard behind > Self.stallSeconds else { return [] }
+        let count = Int(((behind - Self.stallMargin) * sampleRate).rounded())
+        pending.append(contentsOf: repeatElement(0, count: count))
+        return takeWholeFrames()
+    }
+
+    /// Where the next sample belongs, in seconds since the session start.
+    private func expected(from origin: Double) -> Double {
+        origin + Double(emitted * frameSamples + pending.count) / sampleRate
     }
 
     private func takeWholeFrames() -> [Record] {

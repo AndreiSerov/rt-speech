@@ -63,14 +63,57 @@ final class FrameAssemblerTests: XCTestCase {
         XCTAssertEqual(last.samples.filter { $0 != 0 }.count, 383)
     }
 
-    func testAVeryLongGapJumpsTheClockInsteadOfFillingIt() {
+    func testALongGapIsFilledTooSoSpeechOnEitherSideStaysApart() {
         let frames = assembler()
         _ = frames.append(ramp(512), hostSeconds: 100)
-        // A Mac asleep for an hour mustn't produce an hour of silence.
-        let later = frames.append(ramp(512), hostSeconds: 3700)
+        // A real microphone stopped delivering for 67 s. A Mac's sleep can't look like
+        // this, because the host clock stops during sleep.
+        let later = frames.append(ramp(512), hostSeconds: 100 + frameSeconds + 67)
 
-        XCTAssertEqual(later.count, 1)
-        XCTAssertEqual(later[0].timestamp, 3600, accuracy: 1e-9)
+        XCTAssertEqual(later[0].timestamp, frameSeconds, accuracy: 1e-9)
+        XCTAssertEqual(later[0].samples, [Float](repeating: 0, count: 512))
+        for (previous, next) in zip(later, later.dropFirst()) {
+            XCTAssertEqual(next.timestamp - previous.timestamp, frameSeconds, accuracy: 1e-9)
+        }
+        XCTAssertEqual(later[later.count - 1].timestamp, frameSeconds + 67, accuracy: 0.033)
+    }
+
+    func testAStalledStreamKeepsItsClockMovingWithSilence() {
+        let frames = assembler()
+        _ = frames.append(ramp(512), hostSeconds: 100)
+
+        let filled = frames.fillStall(hostSeconds: 110)
+
+        XCTAssertFalse(filled.isEmpty)
+        XCTAssertTrue(filled.allSatisfy { $0.samples == [Float](repeating: 0, count: 512) })
+        XCTAssertEqual(filled[0].timestamp, frameSeconds, accuracy: 1e-9)
+        // It stays a little behind the clock, so audio that was only late still fits.
+        XCTAssertLessThan(filled[filled.count - 1].timestamp, 10)
+        XCTAssertGreaterThan(filled[filled.count - 1].timestamp, 9)
+    }
+
+    func testNormalDeliveryJitterIsNotAStall() {
+        let frames = assembler()
+        _ = frames.append(ramp(512), hostSeconds: 100)
+
+        XCTAssertTrue(frames.fillStall(hostSeconds: 100 + frameSeconds + 0.5).isEmpty)
+    }
+
+    func testAStreamThatNeverStartedHasNothingToFill() {
+        XCTAssertTrue(assembler().fillStall(hostSeconds: 500).isEmpty)
+    }
+
+    func testAudioResumingAfterAStallContinuesWithoutAJumpOrLoss() {
+        let frames = assembler()
+        _ = frames.append(ramp(512), hostSeconds: 100)
+        let filled = frames.fillStall(hostSeconds: 110)
+
+        let resumed = frames.append(ramp(16000), hostSeconds: 110)
+
+        let last = filled[filled.count - 1].timestamp
+        XCTAssertEqual(resumed[0].timestamp, last + frameSeconds, accuracy: 1e-9)
+        // Up to a frame of samples can still be waiting, and the last frame starts a frame early.
+        XCTAssertEqual(resumed[resumed.count - 1].timestamp, 11, accuracy: 0.065)
     }
 
     func testAudioAheadOfTheClockIsDroppedSoDriftDoesNotAccumulate() {
