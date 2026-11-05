@@ -38,11 +38,27 @@ def test_the_committed_config_is_valid() -> None:
         ('[logging]\nlevel = "LOUD"\n', "level"),
         ('[replay]\nrealtime = "maybe"\n', "realtime"),
         ("[logging\n", "config.toml"),
+        ("[segmenter]\nsilence_ende_ms = 600\n", "silence_ende_ms"),
+        ("[segmenter]\nvoice_threshold = 1.5\n", "voice_threshold"),
+        ("[segmenter]\nsplit_search_ms = 20000\n", "split_search_ms"),
+        ("[segmenter]\nsplit_window_ms = 3000\n", "split_window_ms"),
+        ("[segmenter]\npreroll_ms = 18000\n", "preroll_ms"),
+        ("[segmenter]\nmin_speech_ms = 17000\n", "min_speech_ms"),
+        ("[segmenter]\nsilence_end_ms = 18000\n", "silence_end_ms"),
+        ("[segmenter]\nspeech_start_frames = 600\n", "speech_start_frames"),
     ],
 )
 def test_bad_config_is_rejected(tmp_path: Path, content: str, expected: str) -> None:
     with pytest.raises(ConfigError, match=expected):
         load_config(write(tmp_path, content))
+
+
+def test_a_non_utf8_file_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_bytes(b"\xff\xfe")
+
+    with pytest.raises(ConfigError, match="config.toml"):
+        load_config(path)
 
 
 def test_missing_file_is_rejected(tmp_path: Path) -> None:
