@@ -1,0 +1,19 @@
+### Agentic development ###
+# Installed skills (symlinks/copies of external repos)
+.claude/skills/
+.agents/skills/
+# Local, per-machine agent state
+.claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+CLAUDE.local.md
+
+### Python ###
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv/
+.env
