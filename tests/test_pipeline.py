@@ -8,7 +8,15 @@ import pytest
 from numpy.typing import NDArray
 
 from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE, Frame, Stream
-from rt_speech.config import Config, SegmenterConfig, SttConfig, TurnsConfig
+from rt_speech.config import (
+    Config,
+    FasterWhisperConfig,
+    MlxWhisperConfig,
+    SegmenterConfig,
+    SttConfig,
+    SttFilterConfig,
+    TurnsConfig,
+)
 from rt_speech.pipeline import run_pipeline
 from rt_speech.stt import TranscriptPiece
 from rt_speech.turns import Speaker, Turn
@@ -347,3 +355,100 @@ def test_a_failing_turn_callback_stops_the_pipeline_without_hanging() -> None:
     with pytest.raises(ValueError, match="subscriber broke"):
         asyncio.run(asyncio.wait_for(main(), TIMEOUT))
     assert source.closed
+
+
+def test_stop_ends_the_run_even_if_the_source_has_gone_quiet() -> None:
+    turns: list[Turn] = []
+
+    class GoesQuiet(Script):
+        async def __aiter__(self) -> AsyncGenerator[Frame, None]:
+            try:
+                for index in range(20):
+                    pcm = np.full(FRAME_SAMPLES, LOUD, dtype=np.float32)
+                    yield Frame(Stream.MIC, pcm, index * FRAME_SECONDS)
+                await asyncio.Event().wait()  # No more frames, ever.
+            finally:
+                self.closed = True
+
+    source = GoesQuiet({})
+
+    async def main() -> None:
+        stop = asyncio.Event()
+        asyncio.get_running_loop().call_later(0.1, stop.set)
+        await run_pipeline(
+            source, LoudnessDetector, FakeTranscriber(), CONFIG, turns.append, stop=stop
+        )
+
+    asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+    assert [t.text for t in turns] == ["s1"]
+    assert source.closed
+
+
+def test_a_stream_lagging_behind_the_other_does_not_close_its_turn_early() -> None:
+    # System audio arrives far behind the mic's clock. Its two Segments are close
+    # together on its own timeline, so they're one Turn.
+    class Lagging(Script):
+        async def __aiter__(self) -> AsyncGenerator[Frame, None]:
+            system = [LOUD] * 20 + [QUIET] * 12 + [LOUD] * 20 + [QUIET] * 40
+            for index, level in enumerate(system):
+                pcm = np.full(FRAME_SAMPLES, QUIET, dtype=np.float32)
+                yield Frame(Stream.MIC, pcm, (index + 60) * FRAME_SECONDS)
+                pcm = np.full(FRAME_SAMPLES, level, dtype=np.float32)
+                yield Frame(Stream.SYSTEM, pcm, index * FRAME_SECONDS)
+                await asyncio.sleep(0)
+
+    assert [t.text for t in run(Lagging({}), FakeTranscriber())] == ["s1 s2"]
+
+
+def test_a_failing_callback_stops_a_source_that_never_ends() -> None:
+    class Endless(Script):
+        async def __aiter__(self) -> AsyncGenerator[Frame, None]:
+            index = 0
+            try:
+                while True:
+                    level = LOUD if index < 20 else QUIET
+                    pcm = np.full(FRAME_SAMPLES, level, dtype=np.float32)
+                    yield Frame(Stream.SYSTEM, pcm, index * FRAME_SECONDS)
+                    index += 1
+                    await asyncio.sleep(0)
+            finally:
+                self.closed = True
+
+    def explode(_: Turn) -> None:
+        raise ValueError("subscriber broke")
+
+    source = Endless({})
+
+    async def main() -> None:
+        await run_pipeline(source, LoudnessDetector, FakeTranscriber(), CONFIG, explode)
+
+    with pytest.raises(ValueError, match="subscriber broke"):
+        asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+    assert source.closed
+
+
+@pytest.mark.parametrize("engine", ["mlx-whisper", "faster-whisper"])
+def test_the_filter_comes_from_the_active_engine(engine: str) -> None:
+    strict = SttFilterConfig(no_speech_threshold=0.1, avg_logprob_threshold=-0.1)
+    lenient = SttFilterConfig(no_speech_threshold=1.0, avg_logprob_threshold=-100.0)
+    stt = SttConfig(
+        engine=engine,
+        mlx_whisper=MlxWhisperConfig(
+            filter=strict if engine == "mlx-whisper" else lenient
+        ),
+        faster_whisper=FasterWhisperConfig(
+            filter=strict if engine == "faster-whisper" else lenient
+        ),
+    )
+
+    class Doubtful(FakeTranscriber):
+        def transcribe(
+            self, pcm: NDArray[np.float32], language: str | None
+        ) -> list[TranscriptPiece]:
+            return [TranscriptPiece("Шум", no_speech_prob=0.5, avg_logprob=-0.5)]
+
+    config = CONFIG.model_copy(update={"stt": stt})
+    source = Script({Stream.SYSTEM: [LOUD] * 20 + [QUIET] * 40})
+
+    assert run(source, Doubtful(), config) == []

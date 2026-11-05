@@ -10,7 +10,7 @@ This is an early MVP. See [the design](docs/mvp-design.md) for the milestones an
 |---|---|
 | 1. Scaffold, config, `AudioSource`, `FileSource` | Done |
 | 2. Segmenter and debug CLI | Done |
-| 3. STT worker and turn aggregator | Not started |
+| 3. STT worker and turn aggregator | Done |
 | 4. Swift capture and `MacCaptureSource` | Not started |
 | 5. `Suggester` stub | Not started |
 
@@ -19,14 +19,18 @@ This is an early MVP. See [the design](docs/mvp-design.md) for the milestones an
 You need [uv](https://docs.astral.sh/uv/). It installs the Python version the project pins.
 
 ```sh
-uv sync
+uv sync --extra mlx
 ```
+
+`mlx` installs the default speech engine, `mlx-whisper`, which runs on the Apple Silicon GPU. Use `--extra faster` for `faster-whisper`, or `--all-extras` for both. Plain `uv sync` is enough for the tests that run by default.
+
+The first transcription downloads the model from Hugging Face, about 1.6 GB. Audio is never uploaded. After that, set `HF_HUB_OFFLINE=1` to stop the model version check at startup.
 
 ## Tests
 
 ```sh
 uv run pytest            # everything that runs without audio hardware
-uv run pytest -m manual  # tests that need real hardware or permissions (none yet)
+uv run --all-extras pytest -m manual  # tests that need real models or hardware
 ```
 
 ## Configuration
@@ -79,3 +83,21 @@ uv run python -m rt_speech.debug_segment call.wav --out segments/
 Each run replaces any earlier `segment_*.wav` files in that directory, and leaves other files alone. To compare settings, change the `[segmenter]` values in `config.toml` and run it again.
 
 Some tests generate speech with macOS `say`, including the Russian voice Milena.
+
+### Milestone 3
+
+Print speaker-tagged Turns from a WAV file:
+
+```sh
+uv run --extra mlx python -m rt_speech.transcribe call.wav --stream-label system
+```
+
+| Flag | Meaning |
+|---|---|
+| `--stream-label system\|mic` | Which Stream the file plays on: `system` is the Client, `mic` is Me. The default is `system`. |
+| `--other other.wav` | A second file on the other Stream, to test two speakers. |
+| `--language ru\|en\|auto` | Overrides every language in `config.toml`. |
+
+Turns go to stdout and logs go to stderr, so add `2>/dev/null` to see only the Turns. Press Ctrl-C once to finish what was already heard, and again to quit at once.
+
+To use `faster-whisper`, set `engine = "faster-whisper"` under `[stt]` in `config.toml` and install its extra.

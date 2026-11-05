@@ -20,6 +20,7 @@ class _MlxWhisper:
 
         self._transcribe = mlx_whisper.transcribe
         self._model = config.model
+        self._filter = config.filter
 
     def transcribe(
         self, pcm: NDArray[np.float32], language: str | None
@@ -29,8 +30,10 @@ class _MlxWhisper:
             path_or_hf_repo=self._model,
             language=language,
             condition_on_previous_text=False,
-            # Whisper would otherwise drop these silently; our filter logs a reason.
-            no_speech_threshold=None,
+            # Same limits as our filter, which lets the engine skip silence early
+            # rather than retrying it at every temperature.
+            no_speech_threshold=self._filter.no_speech_threshold,
+            logprob_threshold=self._filter.avg_logprob_threshold,
         )
         return [
             TranscriptPiece(s["text"], s["no_speech_prob"], s["avg_logprob"])
@@ -45,6 +48,7 @@ class _FasterWhisper:
         self._model = WhisperModel(
             config.model, device="cpu", compute_type=config.compute_type
         )
+        self._filter = config.filter
 
     def transcribe(
         self, pcm: NDArray[np.float32], language: str | None
@@ -53,7 +57,8 @@ class _FasterWhisper:
             pcm,
             language=language,
             condition_on_previous_text=False,
-            no_speech_threshold=None,
+            no_speech_threshold=self._filter.no_speech_threshold,
+            log_prob_threshold=self._filter.avg_logprob_threshold,
         )
         return [
             TranscriptPiece(s.text, s.no_speech_prob, s.avg_logprob) for s in segments

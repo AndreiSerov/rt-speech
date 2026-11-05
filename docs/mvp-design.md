@@ -48,13 +48,14 @@ The pipeline depends only on `AudioSource`, an async iterator of `(stream, pcm, 
 - Each engine is an optional install (`uv sync --extra mlx`), because `mlx-whisper` requires torch. `mlx-whisper` is the default, `faster-whisper` is selectable, and the starting model is large-v3-turbo.
 - Language is chosen at launch through config or `--language ru|en|auto`, with an optional per-Stream override. The default is `ru`. Previous text isn't passed as `initial_prompt` by default.
 - The hallucination filter checks only the values an engine provides, with thresholds per engine. For Whisper, it drops text when `no_speech_prob` is high and `avg_logprob` is low. Known filler phrases on near-silence are checked for every engine. Each drop is logged with its reason.
+- The active engine gets the filter's thresholds too, so it can skip silence early. It drops such text itself, and the pipeline logs that it found no speech.
 - A future hosted engine must be selected explicitly and print a startup warning that audio is leaving the machine. Consider call-consent rules. Live-streaming APIs would need a different interface.
 
 ## Turns
 
 - A Turn closes on any change of Speaker, or a pause of 1.5–2 s. A short "угу" therefore splits the other Speaker's Turn for now; milestone 3 will show how often that happens.
 - Turns appear in the order their Segments finish, keeping real timestamps.
-- "Pause reached" signals share the queue with Segments, so a Turn can't close while its last Segment is waiting for transcription.
+- "Pause reached" signals share the queue with Segments, so a Turn can't close while its last Segment is waiting for transcription. A signal gives each Stream's own time, because one can lag behind the other, and says which Streams are mid-speech, because a Segment in progress may still continue the Turn.
 - End of file or Ctrl-C finishes the open Segment, transcribes it, and closes all Turns.
 - Emits `Turn(speaker, text, start, end)` events. The future LLM trigger subscribes to "Client Turn closed".
 
@@ -87,6 +88,19 @@ Stop after each and report what works, what doesn't, and the main risks (latency
 - Small, focused commits, with one branch per milestone. The user merges.
 - Test the segmenter and aggregator logic. Mark anything needing real audio hardware as `manual`.
 - Keep the README current with setup, permissions, and how to run each milestone.
+
+## Measured on an M5 Pro
+
+These use speech synthesized by macOS `say`, so accuracy on real calls is still unknown.
+
+| Engine | 3.4 s of speech takes |
+|---|---|
+| `mlx-whisper` large-v3-turbo | 0.19 s |
+| `faster-whisper` large-v3-turbo, CPU int8 | 3.98 s |
+
+- Russian, English and Russian with English words all transcribed correctly, with both `ru` and `auto` on the mixed file. Whisper spelled "deadline" and "feedback" in Cyrillic when the text was mainly Russian.
+- **large-v3-turbo reports `no_speech_prob` 0.0 even on pure silence, and invents text with high confidence: "Продолжение следует..." in Russian, and "Thank you." in English.** The `no_speech_prob` rule therefore never fires on this model. large-v3 (0.61-0.84) and tiny (0.85-0.89) do report it.
+- Silero is the real protection: 0 of 937 frames counted as voiced in each of five 30 s signals of silence, noise and hum. Filler phrases catch what remains on near-silence. Noise or music that Silero does accept could still produce invented text.
 
 ## Risks to measure
 

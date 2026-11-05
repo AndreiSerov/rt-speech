@@ -52,8 +52,8 @@ def test_the_clock_closes_a_turn_after_the_pause() -> None:
     turns = aggregator()
     turns.add(Stream.SYSTEM, "Вопрос", 0.0, 1.0)
 
-    assert turns.clock(2.9, speaking=frozenset()) == []
-    assert turns.clock(3.0, speaking=frozenset()) == [
+    assert turns.clock({Stream.SYSTEM: 2.9}, speaking=frozenset()) == []
+    assert turns.clock({Stream.SYSTEM: 3.0}, speaking=frozenset()) == [
         Turn(Speaker.CLIENT, "Вопрос", 0.0, 1.0)
     ]
     assert turns.flush() == []
@@ -64,7 +64,7 @@ def test_the_clock_waits_while_the_same_stream_is_mid_speech() -> None:
     turns = aggregator()
     turns.add(Stream.SYSTEM, "Один", 0.0, 1.0)
 
-    assert turns.clock(3.5, speaking=frozenset({Stream.SYSTEM})) == []
+    assert turns.clock({Stream.SYSTEM: 3.5}, speaking=frozenset({Stream.SYSTEM})) == []
 
     turns.add(Stream.SYSTEM, "два", 2.5, 4.0)
     assert turns.flush() == [Turn(Speaker.CLIENT, "Один два", 0.0, 4.0)]
@@ -74,7 +74,7 @@ def test_the_other_stream_speaking_does_not_hold_the_turn_open() -> None:
     turns = aggregator()
     turns.add(Stream.SYSTEM, "Вопрос", 0.0, 1.0)
 
-    assert turns.clock(3.0, speaking=frozenset({Stream.MIC})) == [
+    assert turns.clock({Stream.SYSTEM: 3.0}, speaking=frozenset({Stream.MIC})) == [
         Turn(Speaker.CLIENT, "Вопрос", 0.0, 1.0)
     ]
 
@@ -94,7 +94,7 @@ def test_flush_with_nothing_open_produces_nothing() -> None:
 
 
 def test_the_clock_with_nothing_open_produces_nothing() -> None:
-    assert aggregator().clock(100.0, speaking=frozenset()) == []
+    assert aggregator().clock({Stream.SYSTEM: 100.0}, speaking=frozenset()) == []
 
 
 def test_finish_order_is_kept_when_both_talk_at_once() -> None:
@@ -117,3 +117,11 @@ def test_a_segment_overlapping_the_turn_joins_it_with_the_true_span() -> None:
     turns.add(Stream.SYSTEM, "а", 1.0, 2.0)
 
     assert turns.flush() == [Turn(Speaker.CLIENT, "б а", 1.0, 6.0)]
+
+
+def test_the_pause_is_measured_on_the_speakers_own_stream() -> None:
+    # The mic's audio has reached 9 s, but the system's has only reached 1.5 s.
+    turns = aggregator()
+    turns.add(Stream.SYSTEM, "Вопрос", 0.0, 1.0)
+
+    assert turns.clock({Stream.SYSTEM: 1.5, Stream.MIC: 9.0}, frozenset()) == []

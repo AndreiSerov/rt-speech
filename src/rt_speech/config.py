@@ -63,6 +63,7 @@ class SttFilterConfig(_Section):
         "Продолжение следует",
         "Thanks for watching",
         "Thank you",
+        "You",
     ]
 
 
@@ -109,5 +110,5 @@ def load_config(path: Path) -> Config:
             return Config.model_validate(tomllib.load(f))
     except FileNotFoundError:
         raise ConfigError(f"{path}: file not found") from None
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError, ValidationError) as e:
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError, ValidationError) as e:
         raise ConfigError(f"{path}: {e}") from e

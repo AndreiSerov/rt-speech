@@ -1,5 +1,6 @@
 """Joins transcribed Segments into Turns."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -49,13 +50,18 @@ class TurnAggregator:
         self._open = Turn(speaker, text, start, end)
         return [current] if current is not None else []
 
-    def clock(self, now: float, speaking: frozenset[Stream]) -> list[Turn]:
-        """Closes the open Turn after a long enough pause, unless its Speaker's
-        Stream is mid-speech, because that Segment may yet continue the Turn."""
+    def clock(
+        self, now: Mapping[Stream, float], speaking: frozenset[Stream]
+    ) -> list[Turn]:
+        """Closes the open Turn after a long enough pause on its Speaker's own Stream,
+        unless that Stream is mid-speech, since that Segment may yet continue the Turn."""
         current = self._open
-        if current is None or _STREAM_OF_SPEAKER[current.speaker] in speaking:
+        if current is None:
             return []
-        if now - current.end < self._pause:
+        stream = _STREAM_OF_SPEAKER[current.speaker]
+        if stream in speaking or stream not in now:
+            return []
+        if now[stream] - current.end < self._pause:
             return []
         return self.flush()
 

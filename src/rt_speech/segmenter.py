@@ -1,7 +1,7 @@
 """Cuts one Stream's frames into Segments of speech."""
 
 from collections import deque
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Protocol
@@ -33,9 +33,10 @@ class Segment:
 
 @dataclass(frozen=True)
 class StreamClock:
-    """How far the audio has reached, and which Streams are mid-speech at that point."""
+    """How far each Stream's audio has reached, and which Streams are mid-speech. Each
+    Stream has its own time, because one can arrive behind the other."""
 
-    now: float
+    now: Mapping[Stream, float]
     speaking: frozenset[Stream]
 
 
@@ -164,6 +165,7 @@ async def segment_events(
     """Segments every Stream in `source`, each with its own detector and state, with
     regular clock signals in between, because nothing else marks time in silence."""
     segmenters: dict[Stream, Segmenter] = {}
+    reached: dict[Stream, float] = {}
     last_clock = 0.0
     failure: Exception | None = None
     try:
@@ -177,12 +179,13 @@ async def segment_events(
                 for segment in segmenter.feed(frame):
                     yield segment
                 now = frame.timestamp + _FRAME_SECONDS
+                reached[frame.stream] = now
                 if now - last_clock >= _CLOCK_SECONDS:
                     last_clock = now
                     speaking = frozenset(
                         s for s, g in segmenters.items() if g.in_speech
                     )
-                    yield StreamClock(now, speaking)
+                    yield StreamClock(dict(reached), speaking)
     except Exception as e:
         failure = e  # Speech already heard still counts, so flush first.
     for segmenter in segmenters.values():

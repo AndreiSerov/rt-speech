@@ -1,6 +1,7 @@
 """Runs audio through segmentation, transcription and turn aggregation."""
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable
@@ -30,13 +31,29 @@ def _filter_for_engine(config: SttConfig) -> HallucinationFilter:
 
 
 async def _until_stopped(
-    source: AudioSource, stop: asyncio.Event | None
+    source: AudioSource, stop: asyncio.Event
 ) -> AsyncGenerator[Frame, None]:
-    async with aclosing(aiter(source)) as frames:
-        async for frame in frames:
-            yield frame
-            if stop is not None and stop.is_set():
-                return
+    """Ends when `stop` is set, even while the source is waiting for its next frame."""
+    stopped = asyncio.create_task(stop.wait())
+    try:
+        async with aclosing(aiter(source)) as frames:
+            while not stop.is_set():
+                next_frame = asyncio.ensure_future(anext(frames))
+                await asyncio.wait(
+                    {next_frame, stopped}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if not next_frame.done():
+                    next_frame.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                        await next_frame
+                    return
+                try:
+                    frame = next_frame.result()
+                except StopAsyncIteration:
+                    return
+                yield frame
+    finally:
+        stopped.cancel()
 
 
 async def run_pipeline(
@@ -53,6 +70,7 @@ async def run_pipeline(
     # Segments and clock signals share this queue, so a pause can't close a Turn while
     # its last Segment is still waiting for transcription.
     queue: asyncio.Queue[Segment | StreamClock | None] = asyncio.Queue()
+    stop = stop or asyncio.Event()
     pending = _PendingCount(config.stt.queue_warning_segments)
     hallucination_filter = _filter_for_engine(config.stt)
     turns = TurnAggregator(config.turns.pause_ms / 1000)
@@ -87,10 +105,11 @@ async def run_pipeline(
             )
             return ""
         logger.info(
-            "Transcribed %.2f s of %s audio in %.2f s",
+            "Transcribed %.2f s of %s audio in %.2f s%s",
             segment.pcm.size / SAMPLE_RATE,
             segment.stream,
             time.monotonic() - started,
+            "" if pieces else ", and the engine found no speech",
         )
         return hallucination_filter.keep(pieces, segment.pcm)
 
@@ -115,7 +134,7 @@ async def run_pipeline(
         worker.shutdown(wait=False)
         # Raises the source's failure, if that's why the queue ended.
         results = await asyncio.gather(capture_task, return_exceptions=True)
-    if isinstance(results[0], Exception):
+    if isinstance(results[0], BaseException):
         raise results[0]
 
 

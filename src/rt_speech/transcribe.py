@@ -5,9 +5,10 @@ Usage: python -m rt_speech.transcribe input.wav --stream-label system
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from rt_speech.audio import Stream
@@ -19,6 +20,12 @@ from rt_speech.silero_vad import SileroVad
 from rt_speech.stt import Transcriber
 from rt_speech.stt_engines import SttSetupError, make_transcriber
 from rt_speech.turns import Turn
+
+_INTERRUPTED = 130
+
+
+def _silence_stdout() -> None:
+    os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
 
 
 def _print_turn(turn: Turn) -> None:
@@ -34,10 +41,27 @@ def _with_language(config: Config, language: str | None) -> Config:
     return config.model_copy(update={"stt": stt})
 
 
+class InterruptHandler:
+    """The first Ctrl-C finishes what was heard. The second quits at once, because a
+    stuck engine's worker thread would otherwise keep the process alive."""
+
+    def __init__(self, stop: asyncio.Event, force_exit: Callable[[int], object]) -> None:
+        self._stop = stop
+        self._force_exit = force_exit
+
+    def __call__(self) -> None:
+        if self._stop.is_set():
+            self._force_exit(_INTERRUPTED)
+            return
+        self._stop.set()
+        print("Finishing what was heard. Ctrl-C again to quit now.", file=sys.stderr)
+
+
 async def _run(source: FileSource, transcriber: Transcriber, config: Config) -> None:
     stop = asyncio.Event()
-    # Ctrl-C finishes what was already heard rather than abandoning it.
-    asyncio.get_running_loop().add_signal_handler(signal.SIGINT, stop.set)
+    asyncio.get_running_loop().add_signal_handler(
+        signal.SIGINT, InterruptHandler(stop, os._exit)
+    )
     await run_pipeline(source, SileroVad, transcriber, config, _print_turn, stop=stop)
 
 
@@ -75,8 +99,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (ConfigError, FileSourceError, SttSetupError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        return _INTERRUPTED
 
-    asyncio.run(_run(source, transcriber, config))
+    try:
+        asyncio.run(_run(source, transcriber, config))
+    except BrokenPipeError:
+        # The reader of our output left, such as `| head`. Nothing more to say, and
+        # the interpreter's final flush of stdout mustn't complain either.
+        _silence_stdout()
+    except OSError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     return 0
 
 

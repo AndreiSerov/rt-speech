@@ -32,6 +32,8 @@ def _validate(path: Path) -> None:
             width = wav.getsampwidth()
     except FileNotFoundError:
         raise FileSourceError(f"{path}: file not found") from None
+    except OSError as e:
+        raise FileSourceError(f"{path}: {e}") from e
     except (wave.Error, EOFError) as e:
         raise FileSourceError(
             f"{path}: not a readable PCM WAV ({e}). {_conversion_hint(path)}"
