@@ -76,6 +76,8 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// The stream delivering now. Changed only on the main queue.
     private var stream: SCStream?
     private var restarting = false
+    private var starting = false
+    private var stoppedWhileStarting = false
 
     init(writer: RecordWriter, sessionStart: Double) {
         output = StreamOutput(
@@ -89,6 +91,8 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             log("System audio capture started")
         } catch let error as CapturePermissionError {
             throw error
+        } catch is StoppedWhileStartingError {
+            restart()
         } catch where error is NoDisplayError || Self.noDisplayIsOn {
             log("System audio can't start until a display is on, usually after unlocking the Mac")
             restart()
@@ -165,8 +169,22 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        try await stream.startCapture()
+
+        // Known before starting, so a stop that arrives before startCapture returns counts.
         self.stream = stream
+        starting = true
+        stoppedWhileStarting = false
+        defer { starting = false }
+        do {
+            try await stream.startCapture()
+        } catch {
+            self.stream = nil
+            throw error
+        }
+        if stoppedWhileStarting {
+            self.stream = nil
+            throw StoppedWhileStartingError()
+        }
     }
 
     func stream(
@@ -180,7 +198,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         DispatchQueue.main.async { [self] in
-            // A stream that failed to start has already been handled by whoever started it.
+            // A stream no longer in use has already been handled.
             guard stream === self.stream else { return }
             switch (error as? SCStreamError)?.code {
             case .userStopped:
@@ -189,6 +207,10 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 let permission = CapturePermissionError.screenRecording
                 fail(permission.message, code: permission.exitCode)
             default:
+                if starting {
+                    stoppedWhileStarting = true
+                    return
+                }
                 log("System audio capture stopped: \(error.localizedDescription). Restarting it")
                 restart()
             }
@@ -212,6 +234,11 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 /// ScreenCaptureKit only offers audio through a display, and reports none while they sleep.
 struct NoDisplayError: Error, LocalizedError {
     var errorDescription: String? { "no display is on" }
+}
+
+/// The stream ended before it finished starting, so it needs starting again.
+struct StoppedWhileStartingError: Error, LocalizedError {
+    var errorDescription: String? { "the stream stopped while starting" }
 }
 
 enum MicrophoneError: Error, LocalizedError {
