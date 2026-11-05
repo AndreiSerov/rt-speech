@@ -111,7 +111,8 @@ if testSignal {
 var systemCapture: SystemAudioCapture?
 var micCapture: MicrophoneCapture?
 
-Task {
+// On the main actor, where every restart also runs, so they can't overlap the start.
+Task { @MainActor in
     do {
         if mic {
             try await MicrophoneCapture.requestPermission()

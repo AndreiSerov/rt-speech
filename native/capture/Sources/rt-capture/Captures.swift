@@ -73,32 +73,46 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private let output: StreamOutput
     private let queue = DispatchQueue(label: "rt-capture.system")
+    /// The stream delivering now. Changed only on the main queue.
     private var stream: SCStream?
+    private var restarting = false
 
     init(writer: RecordWriter, sessionStart: Double) {
         output = StreamOutput(
             stream: .system, name: "System audio", writer: writer, sessionStart: sessionStart)
     }
 
+    @MainActor
     func start() async throws {
         do {
             try await startStream()
             log("System audio capture started")
-        } catch is NoDisplayError {
+        } catch let error as CapturePermissionError {
+            throw error
+        } catch where error is NoDisplayError || Self.noDisplayIsOn {
             log("System audio can't start until a display is on, usually after unlocking the Mac")
             restart()
         }
     }
 
+    private static var noDisplayIsOn: Bool {
+        var count: UInt32 = 0
+        return CGGetActiveDisplayList(0, nil, &count) == .success && count == 0
+    }
+
     /// The stream is tied to a display, so it can end when displays change or sleep. The
     /// call goes on regardless, so this keeps trying, and the stream's stall handling
-    /// covers the silence meanwhile.
+    /// covers the silence meanwhile. Only one restart runs at a time.
+    @MainActor
     private func restart() {
-        Task {
+        guard !restarting else { return }
+        restarting = true
+        Task { @MainActor in
             var lastMessage: String?
             while true {
                 do {
                     try await startStream()
+                    restarting = false
                     log("System audio capture started again")
                     return
                 } catch let error as CapturePermissionError {
@@ -114,17 +128,24 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
+    @MainActor
     private func startStream() async throws {
+        do {
+            try await startNewStream()
+        } catch let error as SCStreamError
+            where error.code == .userDeclined || error.code == .missingEntitlements
+        {
+            throw CapturePermissionError.screenRecording
+        }
+    }
+
+    @MainActor
+    private func startNewStream() async throws {
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
             throw CapturePermissionError.screenRecording
         }
-        let content: SCShareableContent
-        do {
-            content = try await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: true)
-        } catch let error as SCStreamError where error.code == .userDeclined {
-            throw CapturePermissionError.screenRecording
-        }
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else {
             throw NoDisplayError()
         }
@@ -158,12 +179,20 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        // The person chose to stop sharing, from the macOS menu bar.
-        if (error as? SCStreamError)?.code == .userStopped {
-            fail("System audio capture was stopped from the menu bar")
+        DispatchQueue.main.async { [self] in
+            // A stream that failed to start has already been handled by whoever started it.
+            guard stream === self.stream else { return }
+            switch (error as? SCStreamError)?.code {
+            case .userStopped:
+                fail("System audio capture was stopped from the menu bar")
+            case .userDeclined, .missingEntitlements:
+                let permission = CapturePermissionError.screenRecording
+                fail(permission.message, code: permission.exitCode)
+            default:
+                log("System audio capture stopped: \(error.localizedDescription). Restarting it")
+                restart()
+            }
         }
-        log("System audio capture stopped: \(error.localizedDescription). Restarting it")
-        restart()
     }
 
     private static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
@@ -197,6 +226,7 @@ final class MicrophoneCapture {
     private var engine: AVAudioEngine?
     private let output: StreamOutput
     private var observer: NSObjectProtocol?
+    private var restartScheduled = false
 
     init(writer: RecordWriter, sessionStart: Double) {
         output = StreamOutput(
@@ -217,6 +247,7 @@ final class MicrophoneCapture {
     }
 
     func start() throws {
+        dispatchPrecondition(condition: .onQueue(.main))
         try startEngine()
     }
 
@@ -225,19 +256,32 @@ final class MicrophoneCapture {
     /// tap with that raises an exception nothing can catch. The device can also be
     /// missing for a moment during the switch, so this keeps trying, and the stream's
     /// stall handling covers the silence meanwhile.
+    ///
+    /// Everything here runs on the main queue. It's scheduled rather than run directly,
+    /// so the engine that sent the notification isn't released while it's still sending,
+    /// and several changes in a row cause one restart.
+    private func scheduleRestart(after seconds: Double) {
+        guard !restartScheduled else { return }
+        restartScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self else { return }
+            self.restartScheduled = false
+            self.restart()
+        }
+    }
+
     private func restart() {
         if let engine {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
+            self.engine = nil
         }
         do {
             try startEngine()
             log("Microphone restarted")
         } catch {
             log("Can't restart the microphone yet: \(error.localizedDescription)")
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.restartRetrySeconds) { [weak self] in
-                self?.restart()
-            }
+            scheduleRestart(after: Self.restartRetrySeconds)
         }
     }
 
@@ -256,7 +300,7 @@ final class MicrophoneCapture {
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
             log("Audio device changed, restarting the microphone")
-            self?.restart()
+            self?.scheduleRestart(after: 0)
         }
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [output] buffer, time in
             output.receive(buffer, hostSeconds: AVAudioTime.seconds(forHostTime: time.hostTime))
