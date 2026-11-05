@@ -10,9 +10,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE, Frame, Stream
+from rt_speech.config import Config
 from rt_speech.mac_capture import CaptureError, MacCaptureSource
+from rt_speech.pipeline import run_pipeline
+from rt_speech.stt import TranscriptPiece
+from rt_speech.turns import Turn
 
 REPO_ROOT = Path(__file__).parent.parent
 TIMEOUT = 10.0
@@ -268,3 +273,82 @@ def test_real_devices_produce_both_streams(real_binary: Path) -> None:
     frames = asyncio.run(asyncio.wait_for(run(), 30))
 
     assert {f.stream for f in frames} == {Stream.SYSTEM, Stream.MIC}
+
+
+class _LoudnessDetector:
+    def speech_probability(self, pcm: NDArray[np.float32]) -> float:
+        return 1.0 if float(np.abs(pcm).max()) > 0.1 else 0.0
+
+
+class _FixedTranscriber:
+    def transcribe(self, pcm: NDArray[np.float32], language: str | None) -> list[TranscriptPiece]:
+        return [TranscriptPiece("heard")]
+
+
+def _run_live(binary: Path, stop_after_turn: bool = False) -> tuple[list[Turn], BaseException | None]:
+    turns: list[Turn] = []
+
+    async def run() -> None:
+        stop = asyncio.Event()
+
+        def on_turn(turn: Turn) -> None:
+            turns.append(turn)
+            if stop_after_turn:
+                stop.set()
+
+        await run_pipeline(
+            MacCaptureSource(binary),
+            _LoudnessDetector,
+            _FixedTranscriber(),
+            Config(),
+            on_turn,
+            stop=stop,
+        )
+
+    try:
+        asyncio.run(asyncio.wait_for(run(), TIMEOUT))
+    except CaptureError as e:
+        return turns, e
+    return turns, None
+
+
+SPEECH_THEN_SILENCE = """\
+    ts = 0.0
+    def emit(value, seconds):
+        global ts
+        for _ in range(int(seconds / 0.032)):
+            record(stream=0, ts=ts, value=value)
+            ts += 0.032
+    emit(0.5, 1.0)
+    emit(0.0, 4.0)
+    """
+
+
+def test_stopping_the_pipeline_ends_the_process(tmp_path: Path) -> None:
+    pid_file = tmp_path / "pid"
+    binary = fake_binary(
+        tmp_path,
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+        + textwrap.dedent(SPEECH_THEN_SILENCE)
+        + "while True:\n    emit(0.0, 0.032)\n    time.sleep(0.032)\n",
+    )
+
+    turns, failure = _run_live(binary, stop_after_turn=True)
+
+    assert [turn.text for turn in turns] == ["heard"]
+    assert failure is None
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text()), 0)
+
+
+def test_a_capture_failure_keeps_what_was_heard_then_reports_itself(tmp_path: Path) -> None:
+    binary = fake_binary(
+        tmp_path,
+        textwrap.dedent(SPEECH_THEN_SILENCE) + "print('device gone', file=sys.stderr)\nsys.exit(1)\n",
+    )
+
+    turns, failure = _run_live(binary)
+
+    assert [turn.text for turn in turns] == ["heard"]
+    assert isinstance(failure, CaptureError)
+    assert "device gone" in str(failure)
