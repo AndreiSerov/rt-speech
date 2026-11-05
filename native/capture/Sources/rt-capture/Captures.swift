@@ -124,6 +124,7 @@ final class MicrophoneCapture {
         case .authorized:
             return
         case .notDetermined:
+            log("Waiting for you to answer the macOS Microphone permission dialog")
             if await AVCaptureDevice.requestAccess(for: .audio) { return }
             throw CapturePermissionError.microphone
         default:
