@@ -20,3 +20,6 @@ wheels/
 
 ### Swift ###
 .build/
+
+### IDE ###
+.idea/
