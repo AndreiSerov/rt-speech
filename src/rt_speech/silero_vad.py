@@ -6,7 +6,7 @@ import numpy as np
 import onnxruntime as ort
 from numpy.typing import NDArray
 
-from rt_speech.audio import SAMPLE_RATE
+from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE
 
 # The model expects the end of the previous frame prepended to each new one.
 _CONTEXT_SAMPLES = 64
@@ -29,6 +29,11 @@ class SileroVad:
         self._context = np.zeros((1, _CONTEXT_SAMPLES), dtype=np.float32)
 
     def speech_probability(self, pcm: NDArray[np.float32]) -> float:
+        if pcm.shape != (FRAME_SAMPLES,) or pcm.dtype != np.float32:
+            raise ValueError(
+                f"expected {FRAME_SAMPLES} float32 samples, "
+                f"got shape {pcm.shape} of {pcm.dtype}"
+            )
         frame = pcm.reshape(1, -1)
         output, self._state = self._session.run(
             None,
@@ -38,5 +43,6 @@ class SileroVad:
                 "sr": _SAMPLE_RATE_INPUT,
             },
         )
-        self._context = frame[:, -_CONTEXT_SAMPLES:]
+        # Copied, because the caller may reuse its buffer for the next frame.
+        self._context = frame[:, -_CONTEXT_SAMPLES:].copy()
         return float(output[0, 0])

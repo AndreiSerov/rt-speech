@@ -38,6 +38,11 @@ def test_the_committed_config_is_valid() -> None:
         ('[logging]\nlevel = "LOUD"\n', "level"),
         ('[replay]\nrealtime = "maybe"\n', "realtime"),
         ("[logging\n", "config.toml"),
+        ("[segmenter]\nsilence_ende_ms = 600\n", "silence_ende_ms"),
+        ("[segmenter]\nvoice_threshold = 1.5\n", "voice_threshold"),
+        ("[segmenter]\nsplit_search_ms = 20000\n", "split_search_ms"),
+        ("[segmenter]\nsplit_window_ms = 3000\n", "split_window_ms"),
+        ("[segmenter]\npreroll_ms = 18000\n", "preroll_ms"),
     ],
 )
 def test_bad_config_is_rejected(tmp_path: Path, content: str, expected: str) -> None:

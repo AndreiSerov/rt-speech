@@ -2,9 +2,9 @@
 
 import tomllib
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
 class _Section(BaseModel):
@@ -20,9 +20,32 @@ class ReplayConfig(_Section):
     realtime: bool = False
 
 
+class SegmenterConfig(_Section):
+    voice_threshold: float = Field(default=0.5, gt=0, lt=1)
+    speech_start_frames: int = Field(default=3, gt=0)
+    silence_end_ms: int = Field(default=600, gt=0)
+    preroll_ms: int = Field(default=300, ge=0)
+    postroll_ms: int = Field(default=200, ge=0)
+    min_speech_ms: int = Field(default=300, ge=0)
+    max_segment_ms: int = Field(default=18_000, gt=0)
+    split_search_ms: int = Field(default=2_000, gt=0)
+    split_window_ms: int = Field(default=100, gt=0)
+
+    @model_validator(mode="after")
+    def _check_cap_fits(self) -> Self:
+        if self.split_search_ms > self.max_segment_ms:
+            raise ValueError("split_search_ms can't exceed max_segment_ms")
+        if self.split_window_ms > self.split_search_ms:
+            raise ValueError("split_window_ms can't exceed split_search_ms")
+        if self.preroll_ms >= self.max_segment_ms:
+            raise ValueError("preroll_ms must be below max_segment_ms")
+        return self
+
+
 class Config(_Section):
     logging: LoggingConfig = LoggingConfig()
     replay: ReplayConfig = ReplayConfig()
+    segmenter: SegmenterConfig = SegmenterConfig()
 
 
 class ConfigError(Exception):

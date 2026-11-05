@@ -33,6 +33,13 @@ def speech_wav(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return _say(path, "Hello, this is a short test of voice activity detection.")
 
 
+@pytest.fixture(scope="session")
+def russian_speech_wav(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Real Russian speech. Needs the Milena voice, which ships with macOS."""
+    path = tmp_path_factory.mktemp("speech") / "ru.wav"
+    return _say(path, "Здравствуйте, это короткая проверка определения речи.", "Milena")
+
+
 def read_frames(path: Path) -> list[NDArray[np.float32]]:
     with wave.open(str(path), "rb") as wav:
         data = wav.readframes(wav.getnframes())

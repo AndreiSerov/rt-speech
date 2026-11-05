@@ -5,3 +5,14 @@ level = "INFO"  # DEBUG, INFO, WARNING or ERROR
 
 [replay]
 realtime = false  # true paces FileSource like live audio; false replays as fast as possible
+
+[segmenter]
+voice_threshold = 0.5       # Silero score from which a frame counts as voiced
+speech_start_frames = 3     # consecutive voiced frames needed to enter speech
+silence_end_ms = 600        # silence that closes a Segment
+preroll_ms = 300            # audio kept before the first voiced frame
+postroll_ms = 200           # audio kept after the last voiced frame
+min_speech_ms = 300         # shorter speech is dropped; pre-roll and post-roll don't count
+max_segment_ms = 18000      # hard cap on a Segment
+split_search_ms = 2000      # how far back from the cap to look for a quiet point
+split_window_ms = 100       # how long a quiet point must be; shorter gaps can be inside a word
