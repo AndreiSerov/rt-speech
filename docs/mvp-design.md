@@ -33,11 +33,11 @@ The pipeline depends only on `AudioSource`, an async iterator of `(stream, pcm, 
 ## Segmenter
 
 - State machine idle <-> speech. Enter speech after N consecutive voiced frames, and leave after about 600 ms of silence.
-- About 300 ms of pre-roll, so the first syllable isn't clipped.
-- Hard cap of 15–20 s per Segment: force a split at the quietest point of the last 2 s or so, not mid-word.
-- Drop Segments shorter than about 300 ms.
+- About 300 ms of pre-roll, so the first syllable isn't clipped, and about 200 ms of post-roll after the last voiced frame. The rest of the closing silence is trimmed, so a Segment's end is close to when speech really stopped.
+- Hard cap of 15–20 s per Segment: force a split at the quietest point of the last 2 s or so, not mid-word. Quietness is averaged over about 100 ms, since a shorter gap can be inside a word.
+- Drop Segments with less than about 300 ms of speech, measured from the first voiced frame to the last, because pre-roll alone would otherwise satisfy the limit. The piece after a forced split is exempt, since it continues real speech.
 - All thresholds are in config. Each Segment carries its Stream, start and end timestamps, and PCM.
-- Voice detection uses Silero's ONNX model, committed to the repo and run through `onnxruntime`, behind a small interface. Each Stream has its own VAD state. Confirm the model's license and include it, and test the wrapper once against the official package.
+- Voice detection uses Silero's ONNX model, committed to the repo and run through `onnxruntime`, behind a small interface. Each Stream has its own VAD state. The model is from silero-vad 6.2.3 (MIT), with its license alongside it. Tests compare the wrapper against reference scores from the official package.
 - Measured on an M5 Pro with synthetic noise, single-threaded: 0.07 ms per frame, or 0.44% of one core for two Streams.
 
 ## Speech-to-text

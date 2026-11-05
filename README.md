@@ -9,7 +9,7 @@ This is an early MVP. See [the design](docs/mvp-design.md) for the milestones an
 | Milestone | Status |
 |---|---|
 | 1. Scaffold, config, `AudioSource`, `FileSource` | Done |
-| 2. Segmenter and debug CLI | Not started |
+| 2. Segmenter and debug CLI | Done |
 | 3. STT worker and turn aggregator | Not started |
 | 4. Swift capture and `MacCaptureSource` | Not started |
 | 5. `Suggester` stub | Not started |
@@ -37,7 +37,7 @@ Settings live in [`config.toml`](config.toml). Unknown keys and invalid values a
 
 ### Milestone 1
 
-There's no command to run yet, because nothing consumes the frames until the segmenter exists. To replay a file from Python:
+To replay a file from Python:
 
 ```python
 import asyncio
@@ -67,3 +67,15 @@ On a Mac without `ffmpeg`, you can also generate test speech:
 ```sh
 say -o call.wav --file-format=WAVE --data-format=LEI16@16000 "Hello, this is a test."
 ```
+
+### Milestone 2
+
+Dump each Segment of a WAV file as its own WAV, so you can listen to the cuts:
+
+```sh
+uv run python -m rt_speech.debug_segment call.wav --out segments/
+```
+
+Each run replaces any earlier `segment_*.wav` files in that directory, and leaves other files alone. To compare settings, change the `[segmenter]` values in `config.toml` and run it again.
+
+Some tests generate speech with macOS `say`, including the Russian voice Milena.
