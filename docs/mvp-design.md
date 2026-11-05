@@ -116,7 +116,7 @@ Live capture, playing a `say` phrase through the speakers at low volume:
 - A Russian phrase came through word for word as a Client Turn 1.27 s after playback ended, including the pause that closes the Turn.
 - ScreenCaptureKit keeps delivering frames during silence, so the system Stream's clock keeps advancing.
 - Over 24 s neither Stream had a timestamp step above 32 ms.
-- An early version lost the microphone for good when AirPods became the default input, and the whole capture when the display turned off. See "Keeping capture alive".
+- An early version lost the microphone for 643.8 s across AirPods changes, and the whole capture when the display turned off. With the same changes, the current one restarted the microphone within a second each time, and system audio one second after the display came back. See "Keeping capture alive".
 
 ## Risks to measure
 
