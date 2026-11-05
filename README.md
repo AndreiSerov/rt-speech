@@ -12,7 +12,7 @@ This is an early MVP. See [the design](docs/mvp-design.md) for the milestones an
 | 2. Segmenter and debug CLI | Done |
 | 3. STT worker and turn aggregator | Done |
 | 4. Swift capture and `MacCaptureSource` | Done |
-| 5. `Suggester` stub | In review |
+| 5. `Suggester` stub | Done |
 
 ## Setup
 

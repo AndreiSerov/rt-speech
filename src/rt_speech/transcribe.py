@@ -104,6 +104,9 @@ def run_and_print(source: AudioSource, config: Config) -> int:
         _silence_stdout()
     except OSError as e:
         print(f"error: {e}", file=sys.stderr)
+        # Every print flushes, so anything still buffered already failed to write, and
+        # the final flush would fail again and change the exit code.
+        _silence_stdout()
         return 1
     return 0
 

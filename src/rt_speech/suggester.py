@@ -94,6 +94,9 @@ class SuggestionTrigger:
             async with limit:
                 suggestions = list(await self._suggester.suggest(turns))
         except Exception:
+            # Replaced or abandoned: an error from being cancelled means nothing.
+            if asyncio.current_task() is not self._running:
+                return
             if limit.expired():
                 logger.warning("Suggester timed out after %.1f s", self._timeout)
             else:

@@ -284,14 +284,25 @@ def test_a_replaced_suggestion_stays_hidden_even_if_it_ignores_the_cancel() -> N
 def test_cancel_stops_the_suggestion_in_progress() -> None:
     shown: list[str] = []
 
+    stopped: list[bool] = []
+
+    class NotesCancel(FakeSuggester):
+        async def suggest(self, turns: Sequence[Turn]) -> list[str]:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                stopped.append(True)
+                raise
+            return []
+
     async def main() -> None:
-        suggester = HeldSuggester()
-        trigger = make_trigger(suggester, shown)
+        trigger = make_trigger(NotesCancel(), shown)
         trigger.on_turn(client("first"))
         await asyncio.sleep(0)
         trigger.cancel()
-        suggester.release.set()
         await asyncio.sleep(0.01)
+        # Checked here, because ending the run cancels whatever is left anyway.
+        assert stopped == [True]
 
     asyncio.run(asyncio.wait_for(main(), TIMEOUT))
 
@@ -348,4 +359,35 @@ def test_off_logs_nothing_and_shows_nothing(caplog: pytest.LogCaptureFixture) ->
         asyncio.run(asyncio.wait_for(main(), TIMEOUT))
 
     assert shown == []
+    assert caplog.text == ""
+
+
+def test_a_client_raising_its_own_error_when_cancelled_is_not_a_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The cancel was ours, so nothing went wrong.
+    class ErrorOnCancel(FakeSuggester):
+        async def suggest(self, turns: Sequence[Turn]) -> list[str]:
+            if self.calls:
+                return await super().suggest(turns)
+            self.calls.append(list(turns))
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise ConnectionError("connection closed") from None
+            return []
+
+    shown: list[str] = []
+
+    async def main() -> None:
+        trigger = make_trigger(ErrorOnCancel(), shown)
+        trigger.on_turn(client("first"))
+        await asyncio.sleep(0)
+        trigger.on_turn(client("second"))
+        await trigger.finish()
+
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+    assert shown == ["reply to second"]
     assert caplog.text == ""

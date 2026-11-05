@@ -37,6 +37,12 @@ def engine(monkeypatch: pytest.MonkeyPatch) -> FakeEngine:
     return fake
 
 
+@pytest.fixture(autouse=True)
+def keep_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The real one replaces the test process's stdout.
+    monkeypatch.setattr("rt_speech.transcribe._silence_stdout", lambda: None)
+
+
 def test_a_file_prints_as_the_client_by_default(
     engine: FakeEngine, speech_wav: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -216,7 +222,6 @@ def test_a_closed_pipe_exits_quietly(
         raise BrokenPipeError
 
     monkeypatch.setattr("rt_speech.transcribe.run_pipeline", fail)
-    monkeypatch.setattr("rt_speech.transcribe._silence_stdout", lambda: None)
 
     assert main([str(speech_wav)]) == 0
 
@@ -326,3 +331,38 @@ def test_a_closed_pipe_for_a_suggestion_does_not_hide_a_capture_failure(
     assert main([str(speech_wav)]) == 1
 
     assert "device gone" in capsys.readouterr().err
+
+
+def test_the_suggester_settings_reach_the_run(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text("[suggester]\ntimeout_seconds = 0.01\n")
+    monkeypatch.setattr("rt_speech.transcribe.make_suggester", lambda _: SlowSuggester(0.5))
+    monkeypatch.setattr("rt_speech.transcribe.run_pipeline", _pipeline_that_ends_with(None))
+
+    assert main([str(speech_wav), "--config", str(config)]) == 0
+
+    assert "[suggestion]" not in capsys.readouterr().out
+
+
+def test_a_failed_run_leaves_nothing_for_the_final_flush_to_trip_over(
+    engine: FakeEngine,
+    speech_wav: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A failed print stays in stdout's buffer. Flushing it at exit into a closed pipe
+    # would replace exit code 1 with 120 and add noise after the real error.
+    silenced: list[bool] = []
+    monkeypatch.setattr("rt_speech.transcribe._silence_stdout", lambda: silenced.append(True))
+    monkeypatch.setattr(
+        "rt_speech.transcribe.run_pipeline", _pipeline_that_ends_with(OSError("device gone"))
+    )
+
+    assert main([str(speech_wav)]) == 1
+
+    assert silenced == [True]
