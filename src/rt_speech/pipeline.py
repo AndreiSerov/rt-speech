@@ -1,7 +1,6 @@
 """Runs audio through segmentation, transcription and turn aggregation."""
 
 import asyncio
-import contextlib
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable
@@ -33,27 +32,45 @@ def _filter_for_engine(config: SttConfig) -> HallucinationFilter:
 async def _until_stopped(
     source: AudioSource, stop: asyncio.Event
 ) -> AsyncGenerator[Frame, None]:
-    """Ends when `stop` is set, even while the source is waiting for its next frame."""
-    stopped = asyncio.create_task(stop.wait())
+    """Ends when `stop` is set, even while the source is waiting for its next frame.
+    Frames already read still come through. One task reads the whole source, because
+    a source may hold a timeout or a TaskGroup across its frames."""
+    frames: asyncio.Queue[Frame | None] = asyncio.Queue()
+    failure: BaseException | None = None
+
+    async def read_source() -> None:
+        nonlocal failure
+        try:
+            async with aclosing(aiter(source)) as reader:
+                async for frame in reader:
+                    frames.put_nowait(frame)
+        except asyncio.CancelledError as e:
+            if not stopping:
+                failure = e
+        except Exception as e:
+            failure = e
+        finally:
+            frames.put_nowait(None)
+
+    async def stop_reader() -> None:
+        nonlocal stopping
+        await stop.wait()
+        stopping = True
+        reader_task.cancel()
+
+    stopping = False
+    reader_task = asyncio.create_task(read_source())
+    stopper_task = asyncio.create_task(stop_reader())
     try:
-        async with aclosing(aiter(source)) as frames:
-            while not stop.is_set():
-                next_frame = asyncio.ensure_future(anext(frames))
-                await asyncio.wait(
-                    {next_frame, stopped}, return_when=asyncio.FIRST_COMPLETED
-                )
-                if not next_frame.done():
-                    next_frame.cancel()
-                    with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
-                        await next_frame
-                    return
-                try:
-                    frame = next_frame.result()
-                except StopAsyncIteration:
-                    return
-                yield frame
+        while (frame := await frames.get()) is not None:
+            yield frame
     finally:
-        stopped.cancel()
+        stopping = True
+        stopper_task.cancel()
+        reader_task.cancel()
+        await asyncio.gather(reader_task, stopper_task, return_exceptions=True)
+    if failure is not None:
+        raise failure
 
 
 async def run_pipeline(

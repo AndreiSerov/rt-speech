@@ -452,3 +452,71 @@ def test_the_filter_comes_from_the_active_engine(engine: str) -> None:
     source = Script({Stream.SYSTEM: [LOUD] * 20 + [QUIET] * 40})
 
     assert run(source, Doubtful(), config) == []
+
+
+def test_a_source_can_hold_a_timeout_across_its_frames() -> None:
+    class TimesOut(Script):
+        async def __aiter__(self) -> AsyncGenerator[Frame, None]:
+            async with asyncio.timeout(0.05):
+                pcm = np.zeros(FRAME_SAMPLES, dtype=np.float32)
+                yield Frame(Stream.MIC, pcm, 0.0)
+                await asyncio.Event().wait()
+
+    async def main() -> None:
+        await run_pipeline(
+            TimesOut({}), LoudnessDetector, FakeTranscriber(), CONFIG, lambda _: None
+        )
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+
+class WaitsAfterSpeech(Script):
+    """Speech, enough silence to close the Turn, then no more frames, ever."""
+
+    async def __aiter__(self) -> AsyncGenerator[Frame, None]:
+        levels = [LOUD] * 20 + [QUIET] * 60
+        try:
+            for index, level in enumerate(levels):
+                pcm = np.full(FRAME_SAMPLES, level, dtype=np.float32)
+                yield Frame(Stream.SYSTEM, pcm, index * FRAME_SECONDS)
+            await asyncio.Event().wait()
+        finally:
+            self.closed = True
+
+
+def test_a_failing_callback_closes_a_source_waiting_for_its_next_frame() -> None:
+    def explode(_: Turn) -> None:
+        raise ValueError("subscriber broke")
+
+    source = WaitsAfterSpeech({})
+
+    async def main() -> None:
+        await run_pipeline(source, LoudnessDetector, FakeTranscriber(), CONFIG, explode)
+
+    with pytest.raises(ValueError, match="subscriber broke"):
+        asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+    assert source.closed
+
+
+def test_cancelling_the_run_closes_the_source_and_leaves_no_tasks() -> None:
+    source = WaitsAfterSpeech({})
+    turns: list[Turn] = []
+
+    async def main() -> set[asyncio.Task]:
+        run = asyncio.create_task(
+            run_pipeline(
+                source, LoudnessDetector, FakeTranscriber(), CONFIG, turns.append
+            )
+        )
+        while not turns:
+            await asyncio.sleep(0.01)
+        run.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run
+        return asyncio.all_tasks() - {asyncio.current_task()}
+
+    leftover = asyncio.run(asyncio.wait_for(main(), TIMEOUT))
+
+    assert source.closed
+    assert leftover == set()
