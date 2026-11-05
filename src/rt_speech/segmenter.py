@@ -1,7 +1,7 @@
 """Cuts one Stream's frames into Segments of speech."""
 
 from collections import deque
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Protocol
@@ -14,6 +14,9 @@ from rt_speech.config import SegmenterConfig
 
 _FRAME_SECONDS = FRAME_SAMPLES / SAMPLE_RATE
 _FRAME_MS = _FRAME_SECONDS * 1000
+# How often to report the time. Not a threshold: only the delay of a pause-closed Turn
+# depends on it, and it's well below the pause itself.
+_CLOCK_SECONDS = 0.25
 
 
 class VoiceDetector(Protocol):
@@ -26,6 +29,14 @@ class Segment:
     start: float
     end: float
     pcm: NDArray[np.float32]
+
+
+@dataclass(frozen=True)
+class StreamClock:
+    """How far the audio has reached, and which Streams are mid-speech at that point."""
+
+    now: float
+    speaking: frozenset[Stream]
 
 
 def _to_frames(ms: int) -> int:
@@ -59,6 +70,10 @@ class Segmenter:
         self._last_voiced = 0
         # True when the open Segment continues one that hit the cap.
         self._continuation = False
+
+    @property
+    def in_speech(self) -> bool:
+        return bool(self._frames)
 
     def feed(self, frame: Frame) -> list[Segment]:
         voiced = self._detector.speech_probability(frame.pcm) >= self._threshold
@@ -141,22 +156,49 @@ class Segmenter:
         ]
 
 
+async def segment_events(
+    source: AudioSource,
+    make_detector: Callable[[], VoiceDetector],
+    config: SegmenterConfig,
+) -> AsyncGenerator[Segment | StreamClock, None]:
+    """Segments every Stream in `source`, each with its own detector and state, with
+    regular clock signals in between, because nothing else marks time in silence."""
+    segmenters: dict[Stream, Segmenter] = {}
+    last_clock = 0.0
+    failure: Exception | None = None
+    try:
+        # aclosing: stopping early must stop the source now, such as a capture process.
+        async with aclosing(aiter(source)) as frames:
+            async for frame in frames:
+                segmenter = segmenters.get(frame.stream)
+                if segmenter is None:
+                    segmenter = Segmenter(frame.stream, make_detector(), config)
+                    segmenters[frame.stream] = segmenter
+                for segment in segmenter.feed(frame):
+                    yield segment
+                now = frame.timestamp + _FRAME_SECONDS
+                if now - last_clock >= _CLOCK_SECONDS:
+                    last_clock = now
+                    speaking = frozenset(
+                        s for s, g in segmenters.items() if g.in_speech
+                    )
+                    yield StreamClock(now, speaking)
+    except Exception as e:
+        failure = e  # Speech already heard still counts, so flush first.
+    for segmenter in segmenters.values():
+        for segment in segmenter.flush():
+            yield segment
+    if failure is not None:
+        raise failure
+
+
 async def segment_stream(
     source: AudioSource,
     make_detector: Callable[[], VoiceDetector],
     config: SegmenterConfig,
-) -> AsyncIterator[Segment]:
-    """Segments every Stream in `source`, each with its own detector and state."""
-    segmenters: dict[Stream, Segmenter] = {}
-    # aclosing: stopping early must stop the source now, such as a capture process.
-    async with aclosing(aiter(source)) as frames:
-        async for frame in frames:
-            segmenter = segmenters.get(frame.stream)
-            if segmenter is None:
-                segmenter = Segmenter(frame.stream, make_detector(), config)
-                segmenters[frame.stream] = segmenter
-            for segment in segmenter.feed(frame):
-                yield segment
-    for segmenter in segmenters.values():
-        for segment in segmenter.flush():
-            yield segment
+) -> AsyncGenerator[Segment, None]:
+    """Just the Segments of `segment_events`."""
+    async with aclosing(segment_events(source, make_detector, config)) as events:
+        async for event in events:
+            if isinstance(event, Segment):
+                yield event

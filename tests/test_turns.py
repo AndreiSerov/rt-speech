@@ -108,3 +108,12 @@ def test_finish_order_is_kept_when_both_talk_at_once() -> None:
         Turn(Speaker.ME, "Угу", 5.0, 5.5),
         Turn(Speaker.CLIENT, "Длинная фраза", 0.0, 10.0),
     ]
+
+
+def test_a_segment_overlapping_the_turn_joins_it_with_the_true_span() -> None:
+    # A later Segment can finish earlier when a capped piece is still transcribing.
+    turns = aggregator()
+    turns.add(Stream.SYSTEM, "б", 5.0, 6.0)
+    turns.add(Stream.SYSTEM, "а", 1.0, 2.0)
+
+    assert turns.flush() == [Turn(Speaker.CLIENT, "б а", 1.0, 6.0)]

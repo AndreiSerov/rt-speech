@@ -86,3 +86,51 @@ def test_other_text_on_near_silence_is_kept() -> None:
 
 def test_empty_pieces_produce_no_text() -> None:
     assert FILTER.keep([TranscriptPiece("  ")], LOUD_AUDIO) == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "“Thank you”",
+        "♪ Thank you ♪",
+        "¡Thank you!",
+        "Thanks, for watching",
+        "Спасибо,  за\xa0просмотр",
+    ],
+)
+def test_filler_matching_ignores_punctuation_and_spacing(text: str) -> None:
+    config = SttFilterConfig(
+        filler_phrases=["Thank you", "Thanks for watching", "Спасибо за просмотр"]
+    )
+
+    assert HallucinationFilter(config).keep([TranscriptPiece(text)], NEAR_SILENCE) == ""
+
+
+@pytest.mark.parametrize("text", ["...", "…", "—", "♪ ♪"])
+def test_text_with_no_words_is_dropped_on_any_audio(text: str) -> None:
+    assert FILTER.keep([TranscriptPiece(text)], LOUD_AUDIO) == ""
+
+
+@pytest.mark.parametrize(
+    ("no_speech", "logprob"),
+    [(0.9, None), (None, -2.0)],
+    ids=["only-no-speech", "only-logprob"],
+)
+def test_a_piece_with_only_one_value_is_not_dropped_on_it(
+    no_speech: float | None, logprob: float | None
+) -> None:
+    piece = TranscriptPiece("Текст", no_speech_prob=no_speech, avg_logprob=logprob)
+
+    assert FILTER.keep([piece], LOUD_AUDIO) == "Текст"
+
+
+def test_values_exactly_on_the_thresholds_are_kept() -> None:
+    piece = TranscriptPiece("Текст", no_speech_prob=0.6, avg_logprob=-1.0)
+
+    assert FILTER.keep([piece], LOUD_AUDIO) == "Текст"
+
+
+def test_empty_audio_counts_as_near_silence() -> None:
+    empty = np.zeros(0, dtype=np.float32)
+
+    assert FILTER.keep([TranscriptPiece("Thanks for watching")], empty) == ""

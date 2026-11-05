@@ -1,7 +1,7 @@
 """Speech-to-text: the engine interface and the hallucination filter."""
 
 import logging
-import string
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -12,7 +12,7 @@ from rt_speech.config import SttFilterConfig
 
 logger = logging.getLogger(__name__)
 
-_EDGE_CHARS = string.punctuation + string.whitespace + "…«»—–"
+_WORD = re.compile(r"\w+")
 
 
 @dataclass(frozen=True)
@@ -34,14 +34,15 @@ class Transcriber(Protocol):
         ...
 
 
-def _normalized(text: str) -> str:
-    return text.strip(_EDGE_CHARS).casefold()
+def _words(text: str) -> str:
+    """The text with case, punctuation and spacing removed, for comparing phrases."""
+    return " ".join(_WORD.findall(text)).casefold()
 
 
 class HallucinationFilter:
     def __init__(self, config: SttFilterConfig) -> None:
         self._config = config
-        self._fillers = {_normalized(phrase) for phrase in config.filler_phrases}
+        self._fillers = {_words(phrase) for phrase in config.filler_phrases}
 
     def keep(self, pieces: list[TranscriptPiece], pcm: NDArray[np.float32]) -> str:
         """Returns the text worth keeping from one Segment, possibly empty."""
@@ -52,11 +53,14 @@ class HallucinationFilter:
             reason = self._drop_reason(piece, text, rms)
             if reason:
                 logger.info("Dropped %r: %s", text, reason)
-            elif text:
+            else:
                 kept.append(text)
         return " ".join(kept)
 
     def _drop_reason(self, piece: TranscriptPiece, text: str, rms: float) -> str | None:
+        words = _words(text)
+        if not words:
+            return "no words"
         no_speech, logprob = piece.no_speech_prob, piece.avg_logprob
         config = self._config
         if (
@@ -66,6 +70,6 @@ class HallucinationFilter:
             and logprob < config.avg_logprob_threshold
         ):
             return f"no_speech_prob {no_speech:.2f}, avg_logprob {logprob:.2f}"
-        if rms < config.near_silence_rms and _normalized(text) in self._fillers:
+        if rms < config.near_silence_rms and words in self._fillers:
             return f"filler phrase on near-silence (rms {rms:.4f})"
         return None

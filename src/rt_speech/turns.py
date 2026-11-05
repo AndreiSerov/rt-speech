@@ -42,7 +42,9 @@ class TurnAggregator:
             and start - current.end < self._pause
         ):
             joined = f"{current.text} {text}"
-            self._open = Turn(speaker, joined, current.start, max(current.end, end))
+            self._open = Turn(
+                speaker, joined, min(current.start, start), max(current.end, end)
+            )
             return []
         self._open = Turn(speaker, text, start, end)
         return [current] if current is not None else []
