@@ -344,7 +344,9 @@ def test_stopping_the_pipeline_ends_the_process(tmp_path: Path) -> None:
 def test_a_capture_failure_keeps_what_was_heard_then_reports_itself(tmp_path: Path) -> None:
     binary = fake_binary(
         tmp_path,
-        textwrap.dedent(SPEECH_THEN_SILENCE) + "print('device gone', file=sys.stderr)\nsys.exit(1)\n",
+        # Failing mid-speech, so only the shutdown can close this Turn.
+        textwrap.dedent(SPEECH_THEN_SILENCE).replace("emit(0.0, 4.0)", "")
+        + "print('device gone', file=sys.stderr)\nsys.exit(1)\n",
     )
 
     turns, failure = _run_live(binary)

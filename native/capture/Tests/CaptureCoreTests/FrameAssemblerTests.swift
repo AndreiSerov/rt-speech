@@ -87,9 +87,9 @@ final class FrameAssemblerTests: XCTestCase {
         XCTAssertFalse(filled.isEmpty)
         XCTAssertTrue(filled.allSatisfy { $0.samples == [Float](repeating: 0, count: 512) })
         XCTAssertEqual(filled[0].timestamp, frameSeconds, accuracy: 1e-9)
-        // It stays a little behind the clock, so audio that was only late still fits.
-        XCTAssertLessThan(filled[filled.count - 1].timestamp, 10)
-        XCTAssertGreaterThan(filled[filled.count - 1].timestamp, 9)
+        // It stays half a second behind the clock, so audio that was only late still fits.
+        let filledUpTo = filled[filled.count - 1].timestamp + frameSeconds
+        XCTAssertEqual(filledUpTo, 9.5, accuracy: frameSeconds)
     }
 
     func testNormalDeliveryJitterIsNotAStall() {
@@ -99,11 +99,18 @@ final class FrameAssemblerTests: XCTestCase {
         XCTAssertTrue(frames.fillStall(hostSeconds: 100 + frameSeconds + 0.5).isEmpty)
     }
 
+    func testAStreamASecondAndABitBehindIsAStall() {
+        let frames = assembler()
+        _ = frames.append(ramp(512), hostSeconds: 100)
+
+        XCTAssertFalse(frames.fillStall(hostSeconds: 100 + frameSeconds + 1.2).isEmpty)
+    }
+
     func testAStreamThatNeverStartedHasNothingToFill() {
         XCTAssertTrue(assembler().fillStall(hostSeconds: 500).isEmpty)
     }
 
-    func testAudioResumingAfterAStallContinuesWithoutAJumpOrLoss() {
+    func testAudioResumingOnTimeAfterAStallContinuesWithoutAJump() {
         let frames = assembler()
         _ = frames.append(ramp(512), hostSeconds: 100)
         let filled = frames.fillStall(hostSeconds: 110)

@@ -128,3 +128,4 @@ Live capture, playing a `say` phrase through the speakers at low volume:
 - A cap split landing just after speech ends can shorten that Segment's post-roll. It's rare, and it only removes audio after the last voiced frame.
 - If the Python side stops reading, such as when the terminal is paused, the Swift CLI's write queue grows by about 650 MB an hour. Nothing is lost, and nothing limits it.
 - A multi-channel interface with plain numbered channels is heard through its first channel only.
+- Audio arriving over 1 s late overlaps the silence that filled its place, and that part is lost. Measured delivery delays stayed under 0.4 s.
