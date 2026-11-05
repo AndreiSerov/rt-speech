@@ -356,23 +356,21 @@ def test_a_capture_failure_keeps_what_was_heard_then_reports_itself(tmp_path: Pa
     assert "device gone" in str(failure)
 
 
-def _display_assertions() -> str:
-    return subprocess.run(
+def _keeps_display_awake(process: subprocess.Popen[bytes]) -> bool:
+    """Checks this process only, as another capture may be running."""
+    assertions = subprocess.run(
         ["pmset", "-g", "assertions"], capture_output=True, text=True, check=True
     ).stdout
-
-
-def _rt_capture_keeps_display_awake() -> bool:
     return any(
-        "rt-capture" in line and "NoDisplaySleepAssertion" in line
-        for line in _display_assertions().splitlines()
+        f"pid {process.pid}(" in line and "NoDisplaySleepAssertion" in line
+        for line in assertions.splitlines()
     )
 
 
-def _wait_until_display_is_kept_awake() -> bool:
+def _wait_until_display_is_kept_awake(process: subprocess.Popen[bytes]) -> bool:
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
-        if _rt_capture_keeps_display_awake():
+        if _keeps_display_awake(process):
             return True
         time.sleep(0.05)
     return False
@@ -383,11 +381,11 @@ def test_capturing_system_audio_keeps_the_display_awake(real_binary: Path) -> No
         [real_binary, "--test-signal", "--duration", "30"], stdout=subprocess.DEVNULL
     )
     try:
-        assert _wait_until_display_is_kept_awake()
+        assert _wait_until_display_is_kept_awake(process)
     finally:
         process.terminate()
         process.wait()
-    assert not _rt_capture_keeps_display_awake()
+    assert not _keeps_display_awake(process)
 
 
 def test_capturing_without_system_audio_lets_the_display_sleep(real_binary: Path) -> None:
@@ -396,7 +394,7 @@ def test_capturing_without_system_audio_lets_the_display_sleep(real_binary: Path
         stdout=subprocess.DEVNULL,
     )
     try:
-        assert not _wait_until_display_is_kept_awake()
+        assert not _wait_until_display_is_kept_awake(process)
     finally:
         process.terminate()
         process.wait()

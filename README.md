@@ -11,7 +11,7 @@ This is an early MVP. See [the design](docs/mvp-design.md) for the milestones an
 | 1. Scaffold, config, `AudioSource`, `FileSource` | Done |
 | 2. Segmenter and debug CLI | Done |
 | 3. STT worker and turn aggregator | Done |
-| 4. Swift capture and `MacCaptureSource` | In review |
+| 4. Swift capture and `MacCaptureSource` | Done |
 | 5. `Suggester` stub | Not started |
 
 ## Setup
