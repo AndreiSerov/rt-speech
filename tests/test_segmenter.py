@@ -1,9 +1,12 @@
+import asyncio
+from collections.abc import AsyncIterator
+
 import numpy as np
 from numpy.typing import NDArray
 
 from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE, Frame, Stream
 from rt_speech.config import SegmenterConfig
-from rt_speech.segmenter import Segment, Segmenter
+from rt_speech.segmenter import Segment, Segmenter, segment_stream
 
 FRAME_SECONDS = FRAME_SAMPLES / SAMPLE_RATE
 
@@ -210,3 +213,65 @@ def test_a_new_segment_after_a_split_uses_the_minimum_again() -> None:
     levels = [LOUD] * 110 + [QUIET] * 20 + [LOUD] * 4 + [QUIET] * 20
 
     assert all(s.end <= 112 * FRAME_SECONDS for s in run(levels, flush=False))
+
+
+class ScriptedSource:
+    """Two streams speaking at different times."""
+
+    def __init__(self, levels: dict[Stream, list[float]]) -> None:
+        self._levels = levels
+
+    async def __aiter__(self) -> AsyncIterator[Frame]:
+        for index in range(max(len(v) for v in self._levels.values())):
+            for stream, levels in self._levels.items():
+                if index < len(levels):
+                    pcm = np.full(FRAME_SAMPLES, levels[index], dtype=np.float32)
+                    yield Frame(stream, pcm, index * FRAME_SECONDS)
+
+
+def collect_segments(levels: dict[Stream, list[float]]) -> list[Segment]:
+    async def run_all() -> list[Segment]:
+        stream = segment_stream(ScriptedSource(levels), LoudnessDetector, CONFIG)
+        return [segment async for segment in stream]
+
+    return asyncio.run(run_all())
+
+
+def test_each_stream_is_segmented_independently() -> None:
+    # Speech on the mic must not keep the system Segment open, and vice versa.
+    segments = collect_segments(
+        {
+            Stream.SYSTEM: [LOUD] * 20 + [QUIET] * 60,
+            Stream.MIC: [QUIET] * 10 + [LOUD] * 40 + [QUIET] * 30,
+        }
+    )
+
+    assert [(s.stream, round(s.end / FRAME_SECONDS)) for s in segments] == [
+        (Stream.SYSTEM, 22),
+        (Stream.MIC, 52),
+    ]
+
+
+def test_open_segments_on_every_stream_are_flushed_at_the_end() -> None:
+    segments = collect_segments(
+        {Stream.SYSTEM: [LOUD] * 20, Stream.MIC: [LOUD] * 10}
+    )
+
+    assert sorted(s.stream for s in segments) == [Stream.MIC, Stream.SYSTEM]
+
+
+def test_each_stream_gets_its_own_detector() -> None:
+    made: list[LoudnessDetector] = []
+
+    def factory() -> LoudnessDetector:
+        made.append(LoudnessDetector())
+        return made[-1]
+
+    async def run_all() -> None:
+        source = ScriptedSource({Stream.SYSTEM: [QUIET], Stream.MIC: [QUIET]})
+        async for _ in segment_stream(source, factory, CONFIG):
+            pass
+
+    asyncio.run(run_all())
+
+    assert len(made) == 2

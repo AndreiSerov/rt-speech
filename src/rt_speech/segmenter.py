@@ -1,13 +1,14 @@
 """Cuts one Stream's frames into Segments of speech."""
 
 from collections import deque
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
 
-from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE, Frame, Stream
+from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE, AudioSource, Frame, Stream
 from rt_speech.config import SegmenterConfig
 
 _FRAME_SECONDS = FRAME_SAMPLES / SAMPLE_RATE
@@ -140,3 +141,22 @@ class Segmenter:
                 np.concatenate([frame.pcm for frame in frames]),
             )
         ]
+
+
+async def segment_stream(
+    source: AudioSource,
+    make_detector: Callable[[], VoiceDetector],
+    config: SegmenterConfig,
+) -> AsyncIterator[Segment]:
+    """Segments every Stream in `source`, each with its own detector and state."""
+    segmenters: dict[Stream, Segmenter] = {}
+    async for frame in source:
+        segmenter = segmenters.get(frame.stream)
+        if segmenter is None:
+            segmenter = Segmenter(frame.stream, make_detector(), config)
+            segmenters[frame.stream] = segmenter
+        for segment in segmenter.feed(frame):
+            yield segment
+    for segmenter in segmenters.values():
+        for segment in segmenter.flush():
+            yield segment
