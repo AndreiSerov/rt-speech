@@ -11,7 +11,7 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from rt_speech.audio import Stream
+from rt_speech.audio import AudioSource, Stream
 from rt_speech.config import Config, ConfigError, SttConfig, load_config
 from rt_speech.file_source import FileSource, FileSourceError
 from rt_speech.logging_setup import setup_logging
@@ -32,7 +32,7 @@ def _print_turn(turn: Turn) -> None:
     print(f"[{turn.speaker}] {turn.text}", flush=True)
 
 
-def _with_language(config: Config, language: str | None) -> Config:
+def with_language(config: Config, language: str | None) -> Config:
     if language is None:
         return config
     stt: SttConfig = config.stt.model_copy(
@@ -57,12 +57,34 @@ class InterruptHandler:
         print("Finishing what was heard. Ctrl-C again to quit now.", file=sys.stderr)
 
 
-async def _run(source: FileSource, transcriber: Transcriber, config: Config) -> None:
+async def _run(source: AudioSource, transcriber: Transcriber, config: Config) -> None:
     stop = asyncio.Event()
     asyncio.get_running_loop().add_signal_handler(
         signal.SIGINT, InterruptHandler(stop, os._exit)
     )
     await run_pipeline(source, SileroVad, transcriber, config, _print_turn, stop=stop)
+
+
+def run_and_print(source: AudioSource, config: Config) -> int:
+    """Loads the engine and prints Turns from `source`. Returns the exit code."""
+    try:
+        transcriber = make_transcriber(config.stt)
+    except SttSetupError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return _INTERRUPTED
+
+    try:
+        asyncio.run(_run(source, transcriber, config))
+    except BrokenPipeError:
+        # The reader of our output left, such as `| head`. Nothing more to say, and
+        # the interpreter's final flush of stdout mustn't complain either.
+        _silence_stdout()
+    except OSError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -92,26 +114,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         inputs.append((args.other, other))
 
     try:
-        config = _with_language(load_config(args.config), args.language)
+        config = with_language(load_config(args.config), args.language)
         setup_logging(config.logging.level)
         source = FileSource(inputs, realtime=config.replay.realtime)
-        transcriber = make_transcriber(config.stt)
-    except (ConfigError, FileSourceError, SttSetupError) as e:
+    except (ConfigError, FileSourceError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    except KeyboardInterrupt:
-        return _INTERRUPTED
-
-    try:
-        asyncio.run(_run(source, transcriber, config))
-    except BrokenPipeError:
-        # The reader of our output left, such as `| head`. Nothing more to say, and
-        # the interpreter's final flush of stdout mustn't complain either.
-        _silence_stdout()
-    except OSError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    return 0
+    return run_and_print(source, config)
 
 
 if __name__ == "__main__":

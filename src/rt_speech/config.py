@@ -92,7 +92,12 @@ class TurnsConfig(_Section):
     pause_ms: int = Field(default=1_800, gt=0)
 
 
+class CaptureConfig(_Section):
+    binary: Path = Path("native/capture/.build/release/rt-capture")
+
+
 class Config(_Section):
+    capture: CaptureConfig = CaptureConfig()
     logging: LoggingConfig = LoggingConfig()
     replay: ReplayConfig = ReplayConfig()
     segmenter: SegmenterConfig = SegmenterConfig()

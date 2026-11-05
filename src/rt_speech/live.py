@@ -1,0 +1,37 @@
+"""Prints speaker-tagged Turns from a live call: system audio and the microphone.
+
+Usage: python -m rt_speech.live
+"""
+
+import argparse
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+
+from rt_speech.config import ConfigError, load_config
+from rt_speech.logging_setup import setup_logging
+from rt_speech.mac_capture import MacCaptureSource
+from rt_speech.transcribe import run_and_print, with_language
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--language",
+        choices=["ru", "en", "auto"],
+        help="overrides every language in the config",
+    )
+    parser.add_argument("--config", type=Path, default=Path("config.toml"))
+    args = parser.parse_args(argv)
+
+    try:
+        config = with_language(load_config(args.config), args.language)
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    setup_logging(config.logging.level)
+    return run_and_print(MacCaptureSource(config.capture.binary), config)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
