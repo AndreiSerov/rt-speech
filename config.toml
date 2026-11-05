@@ -16,3 +16,32 @@ min_speech_ms = 300         # shorter speech is dropped; pre-roll and post-roll 
 max_segment_ms = 18000      # hard cap on a Segment
 split_search_ms = 2000      # how far back from the cap to look for a quiet point
 split_window_ms = 100       # how long a quiet point must be; shorter gaps can be inside a word
+
+[stt]
+engine = "mlx-whisper"      # or "faster-whisper"; each is an optional install
+language = "ru"             # ru, en or auto
+# system_language = "auto"  # overrides for one Stream
+# mic_language = "ru"
+queue_warning_segments = 5  # warn when more Segments than this await transcription
+
+[stt.mlx_whisper]
+model = "mlx-community/whisper-large-v3-turbo"
+
+[stt.mlx_whisper.filter]
+no_speech_threshold = 0.6     # dropped only if no_speech_prob is above this...
+avg_logprob_threshold = -1.0  # ...and avg_logprob is below this
+near_silence_rms = 0.01       # filler phrases are dropped only below this level
+filler_phrases = ["Спасибо за просмотр", "Субтитры сделал DimaTorzok", "Продолжение следует", "Thanks for watching", "Thank you", "You"]
+
+[stt.faster_whisper]
+model = "large-v3-turbo"
+compute_type = "int8"
+
+[stt.faster_whisper.filter]
+no_speech_threshold = 0.6
+avg_logprob_threshold = -1.0
+near_silence_rms = 0.01
+filler_phrases = ["Спасибо за просмотр", "Субтитры сделал DimaTorzok", "Продолжение следует", "Thanks for watching", "Thank you", "You"]
+
+[turns]
+pause_ms = 1800  # silence that closes a Turn

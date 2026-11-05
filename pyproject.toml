@@ -16,6 +16,14 @@ dependencies = [
 [project.scripts]
 rt-speech = "rt_speech:main"
 
+[project.optional-dependencies]
+mlx = [
+    "mlx-whisper>=0.4.3",
+]
+faster = [
+    "faster-whisper>=1.2.1",
+]
+
 [build-system]
 requires = ["uv_build>=0.10.7,<0.11.0"]
 build-backend = "uv_build"
