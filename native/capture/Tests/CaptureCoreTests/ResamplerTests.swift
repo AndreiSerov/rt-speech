@@ -92,8 +92,11 @@ final class ResamplerTests: XCTestCase {
         }
     }
 
-    func testChannelsDescribedOnlyByNumberStayAudible() throws {
-        for label in [kAudioChannelLabel_Discrete_0, kAudioChannelLabel_Unused, kAudioChannelLabel_Unknown] {
+    func testChannelsThatArentSpeakerPositionsStayAudible() throws {
+        for label in [
+            kAudioChannelLabel_Discrete_0, kAudioChannelLabel_Unused, kAudioChannelLabel_Unknown,
+            kAudioChannelLabel_Haptic, kAudioChannelLabel_Narration, kAudioChannelLabel_LFE2, 399,
+        ] {
             for channels in [2, 4] {
                 XCTAssertGreaterThan(
                     try peak(through: describedLayout(labels: [AudioChannelLabel](repeating: label, count: channels))),

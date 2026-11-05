@@ -26,15 +26,20 @@ public final class Resampler {
         return kind == kAudioChannelLayoutTag_DiscreteInOrder || kind == kAudioChannelLayoutTag_Unknown
     }
 
+    /// The positions a downmix is known to keep. Labels like LFE2 or Haptic downmix to zeros.
+    private static let speakerLabels: Set<AudioChannelLabel> = [
+        kAudioChannelLabel_Left, kAudioChannelLabel_Right, kAudioChannelLabel_Center,
+        kAudioChannelLabel_LeftSurround, kAudioChannelLabel_RightSurround,
+        kAudioChannelLabel_Mono, kAudioChannelLabel_HeadphonesLeft, kAudioChannelLabel_HeadphonesRight,
+    ]
+
     private static func hasOnlySpeakerLabels(_ layout: AVAudioChannelLayout) -> Bool {
         let offset = MemoryLayout<AudioChannelLayout>.offset(of: \.mChannelDescriptions)!
         let first = UnsafeRawPointer(layout.layout).advanced(by: offset)
             .assumingMemoryBound(to: AudioChannelDescription.self)
         let descriptions = UnsafeBufferPointer(
             start: first, count: Int(layout.layout.pointee.mNumberChannelDescriptions))
-        return descriptions.allSatisfy {
-            (kAudioChannelLabel_Left..<kAudioChannelLabel_Discrete).contains($0.mChannelLabel)
-        }
+        return descriptions.allSatisfy { speakerLabels.contains($0.mChannelLabel) }
     }
 
     public func convert(_ input: AVAudioPCMBuffer) throws -> [Float] {
