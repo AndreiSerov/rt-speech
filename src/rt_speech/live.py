@@ -1,4 +1,4 @@
-"""Prints speaker-tagged Turns from a live call: system audio and the microphone.
+"""Prints speaker-tagged Turns and Suggestions from a live call: system audio and the microphone.
 
 Usage: python -m rt_speech.live
 """

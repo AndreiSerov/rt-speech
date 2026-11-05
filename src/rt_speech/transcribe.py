@@ -1,4 +1,4 @@
-"""Prints speaker-tagged Turns from WAV files.
+"""Prints speaker-tagged Turns and Suggestions from WAV files.
 
 Usage: python -m rt_speech.transcribe input.wav --stream-label system
 """

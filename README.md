@@ -1,6 +1,6 @@
 # rt-speech
 
-A local live call copilot for macOS on Apple Silicon. It listens to system audio (the client) and the microphone (me), transcribes speech in near real time, and prints speaker-tagged turns. No audio leaves the machine.
+A local live call copilot for macOS on Apple Silicon. It listens to system audio (the client) and the microphone (me), transcribes speech in near real time, and prints speaker-tagged turns. After each client turn it prints a placeholder suggestion, ready for a real model later. No audio leaves the machine.
 
 This is an early MVP. See [the design](docs/mvp-design.md) for the milestones and decisions, and [the glossary](GLOSSARY.md) for what the terms mean.
 
@@ -12,7 +12,7 @@ This is an early MVP. See [the design](docs/mvp-design.md) for the milestones an
 | 2. Segmenter and debug CLI | Done |
 | 3. STT worker and turn aggregator | Done |
 | 4. Swift capture and `MacCaptureSource` | Done |
-| 5. `Suggester` stub | Not started |
+| 5. `Suggester` stub | In review |
 
 ## Setup
 
@@ -142,3 +142,22 @@ native/capture/.build/release/rt-capture --no-system > /dev/null  # microphone o
 ```
 
 The Swift tests run with `swift test --package-path native/capture`, and the test that uses the real devices runs with `uv run pytest -m manual tests/test_mac_capture.py`.
+
+### Milestone 5
+
+`transcribe` and `live` now print a Suggestion each time a Client Turn closes. No model is involved yet: the text is a placeholder marked `(dummy)`, and nothing goes over the network.
+
+```
+[client] Можно ли получить скидку для небольшой команды?
+[suggestion] (dummy) Follow up on "...получить скидку для небольшой команды?"
+```
+
+Settings are under `[suggester]` in `config.toml`:
+
+| Setting | Meaning |
+|---|---|
+| `engine` | `dummy` prints placeholders, and `off` prints none. |
+| `recent_turns` | How many Turns a Suggestion is based on. |
+| `timeout_seconds` | How long to wait for a Suggestion before giving up. |
+
+To add a real model, implement `Suggester` in `src/rt_speech/suggester.py` and add it to `make_suggester`.

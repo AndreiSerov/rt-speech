@@ -1,6 +1,6 @@
 # Live Call Copilot
 
-A local tool that listens to both sides of a call, turns the speech into speaker-tagged text, and will later suggest what to say next.
+A local tool that listens to both sides of a call, turns the speech into speaker-tagged text, and suggests what to say next.
 
 ## Language
 
@@ -27,3 +27,7 @@ _Avoid_: Utterance, chunk, phrase
 **Turn**:
 Consecutive Segments from the same Speaker, closed by a change of Speaker or a long enough pause.
 _Avoid_: Message, line, replica
+
+**Suggestion**:
+A short thing Me could say next, produced from recent Turns when a Client Turn closes.
+_Avoid_: Hint, reply, prompt
