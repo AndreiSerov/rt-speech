@@ -1,6 +1,6 @@
 # rt-speech
 
-A local live call copilot for macOS on Apple Silicon. It listens to system audio (the client) and the microphone (me), transcribes speech in near real time, and prints speaker-tagged turns. After each client turn it prints a placeholder suggestion, ready for a real model later. No audio leaves the machine.
+A local live call copilot for macOS on Apple Silicon. It listens to system audio (the client) and the microphone (me), transcribes speech in near real time, prints speaker-tagged turns, and saves them to a text file with timecodes. After each client turn it prints a placeholder suggestion, ready for a real model later. No audio leaves the machine.
 
 This is an early MVP. See [the design](docs/mvp-design.md) for the milestones and decisions, and [the glossary](GLOSSARY.md) for what the terms mean.
 
@@ -13,6 +13,7 @@ This is an early MVP. See [the design](docs/mvp-design.md) for the milestones an
 | 3. STT worker and turn aggregator | Done |
 | 4. Swift capture and `MacCaptureSource` | Done |
 | 5. `Suggester` stub | Done |
+| 6. Transcripts and MP3 | Done |
 
 ## Setup
 
@@ -67,7 +68,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`FileSource` accepts only 16 kHz mono 16-bit WAV files. Convert anything else with:
+`FileSource` accepts MP3 files of any sample rate and channel count, with no conversion, and WAV files that are 16 kHz mono 16-bit. Convert anything else with:
 
 ```sh
 ffmpeg -i input.m4a -ar 16000 -ac 1 -c:a pcm_s16le call.wav
@@ -81,7 +82,7 @@ say -o call.wav --file-format=WAVE --data-format=LEI16@16000 "Hello, this is a t
 
 ### Milestone 2
 
-Dump each Segment of a WAV file as its own WAV, so you can listen to the cuts:
+Dump each Segment of a WAV or MP3 file as its own WAV, so you can listen to the cuts:
 
 ```sh
 uv run python -m rt_speech.debug_segment call.wav --out segments/
@@ -93,16 +94,16 @@ Some tests generate speech with macOS `say`, including the Russian voice Milena.
 
 ### Milestone 3
 
-Print speaker-tagged Turns from a WAV file:
+Print speaker-tagged Turns from a WAV or MP3 file:
 
 ```sh
-uv run --extra mlx python -m rt_speech.transcribe call.wav --stream-label system
+uv run --extra mlx python -m rt_speech.transcribe call.mp3 --stream-label system
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--stream-label system\|mic` | Which Stream the file plays on: `system` is the Client, `mic` is Me. The default is `system`. |
-| `--other other.wav` | A second file on the other Stream, to test two speakers. |
+| `--other other.mp3` | A second WAV or MP3 file on the other Stream, to test two speakers. |
 | `--language ru\|en\|auto` | Overrides every language in `config.toml`. |
 
 Turns go to stdout and logs go to stderr, so add `2>/dev/null` to see only the Turns. Press Ctrl-C once to finish what was already heard, and again to quit at once.
@@ -168,3 +169,40 @@ Settings are under `[suggester]` in `config.toml`:
 | `timeout_seconds` | How long to wait for a Suggestion before giving up. |
 
 To add a real model, implement `Suggester` in `src/rt_speech/suggester.py`, add it to `make_suggester`, and add its name to `engine` in `config.py`.
+
+### Milestone 6
+
+`live` and `transcribe` now save a Transcript: a plain text file of the run's Turns. Each run prints its path to stderr when it starts. Suggestions aren't saved, and a run that hears no speech leaves no file.
+
+| Command | File | First line |
+|---|---|---|
+| `live` | `transcripts/live/2026-11-06_14-30-05.txt` | `Встреча 2026-11-06 14:30:05` |
+| `transcribe` | `transcripts/transcribe/call_2026-11-06_14-30-05.txt` | `Файл call.mp3, обработан 2026-11-06 14:30:05` |
+
+For `live`, the date and time are when the meeting started. For `transcribe`, they're when the file was processed, not when the meeting happened. With `--other`, the first line lists both files and the name uses the main one.
+
+```
+Встреча 2026-11-06 14:30:05
+
+[00:00:12] [client] Можно ли получить скидку?
+[00:00:19] [me] Да, давайте обсудим.
+```
+
+Each timecode is when the Turn started, counted from the start of capture or of the file. Lines are in the order Turns closed, as in the terminal, so neighbouring timecodes can be slightly out of order.
+
+Settings are under `[transcript]` in `config.toml`:
+
+| Setting | Meaning |
+|---|---|
+| `enabled` | `false` saves nothing, for both commands. |
+| `dir` | The root directory. A relative path starts from where you run the command. |
+
+Transcripts hold private conversations as plain text:
+
+- Git ignores `transcripts/`. If you set `dir` elsewhere, keep it out of git yourself.
+- Don't point `dir` at a synced folder, such as `~/Documents` with iCloud Drive on, or Transcripts will leave the machine.
+- Saving is on by default. Whether to record a call, and whether to tell the other side, is your decision.
+
+Each Turn is written to disk as it closes, so quitting at once loses at most the Turn still open. A directory that can't be used stops the run before it starts. If saving fails during a run, such as on a full disk, you get one error, and Turns keep printing but are no longer saved.
+
+A corrupt MP3 stops with an error, after saving what was heard before the damage. A file that is only cut short gives no error: you get a normal Transcript of the part that exists, so check the end of a recording you don't trust.

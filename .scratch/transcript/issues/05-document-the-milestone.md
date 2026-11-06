@@ -4,9 +4,9 @@
 
 **Blocked by:** 01, 02, 03, 04
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The README status table lists milestone 6 as done, and a section shows where Transcripts go, what they look like, and their settings.
-- [ ] The README warns against pointing `dir` at a synced folder such as iCloud, and says that recording a call and telling the other side is the user's decision.
-- [ ] The README's `FileSource` and `ffmpeg` instructions reflect that MP3 needs no conversion.
-- [ ] The design doc covers the decisions of this milestone and adds it to the milestone list.
+- [x] The README status table lists milestone 6 as done, and a section shows where Transcripts go, what they look like, and their settings.
+- [x] The README warns against pointing `dir` at a synced folder such as iCloud, and says that recording a call and telling the other side is the user's decision.
+- [x] The README's `FileSource` and `ffmpeg` instructions reflect that MP3 needs no conversion.
+- [x] The design doc covers the decisions of this milestone and adds it to the milestone list.

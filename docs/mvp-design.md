@@ -1,11 +1,11 @@
 # MVP design
 
-The agreed scope and decisions for the live call copilot MVP: capture, segmentation, transcription and speaker-tagged turns printed in the terminal. The LLM suggestion stage is a stub.
+The agreed scope and decisions for the live call copilot MVP: capture, segmentation, transcription and speaker-tagged turns printed in the terminal and saved to a Transcript. The LLM suggestion stage is a stub.
 
 ## Constraints
 
 - macOS on Apple Silicon only for now. Capture stays behind `AudioSource`, so a Windows backend (WASAPI loopback) can be added without touching the rest.
-- Local-first: no audio leaves the machine in the MVP.
+- Local-first: no audio or Transcript leaves the machine in the MVP.
 - Python 3.12 managed with uv, in the package `rt_speech`. A small Swift CLI handles capture.
 - Calls may mix Russian and English, and both must be tested.
 
@@ -17,8 +17,8 @@ Overlay UI, Windows support, per-app audio capture, live diarization, CRM or RAG
 
 ```
 Swift CLI (system + mic) ─┐
-                          ├─> AudioSource -> segmenter (one per stream) -> STT worker -> turn aggregator -> terminal
-WAV files (FileSource) ───┘                                                                     |
+                          ├─> AudioSource -> segmenter (one per stream) -> STT worker -> turn aggregator -> Transcript, terminal
+WAV/MP3 (FileSource) ─────┘                                                                     |
                                                                                      each closed Client Turn
                                                                                                 v
                                                                                             Suggester -> terminal
@@ -31,7 +31,9 @@ The pipeline depends only on `AudioSource`, an async iterator of `(stream, pcm, 
 - Frames are 512 samples (32 ms) of float32 mono audio at 16 kHz, because Silero VAD accepts only that size at 16 kHz.
 - Timestamps are seconds since one session start shared by both streams.
 - All timing logic uses these timestamps, never wall-clock time, so replays are fast and repeatable.
-- `FileSource` takes one file per stream, merges them by timestamp, replays as fast as possible unless `realtime` is set, and rejects anything but 16 kHz mono 16-bit WAV.
+- `FileSource` takes one file per stream, merges them by timestamp, and replays as fast as possible unless `realtime` is set. It accepts 16 kHz mono 16-bit WAV, and rejects other WAVs.
+- `.mp3` files, matched by extension in any case, are decoded with PyAV and resampled to 16 kHz mono as they play, so memory use doesn't grow with length. PyAV is a required dependency, because it decodes in-process with no temporary files or external tools.
+- A broken MP3 fails on construction, before an engine loads. Corruption or a format change during replay fails with `FileSourceError` once what was heard is flushed. Truncation gives no error, because libav accepts a file cut short. A truncated WAV behaves the same way.
 
 ## Segmenter
 
@@ -70,6 +72,19 @@ The pipeline depends only on `AudioSource`, an async iterator of `(stream, pcm, 
 - A Suggester failure or timeout is logged and the call goes on. When a run ends normally, including on Ctrl-C, the Suggestion in progress gets up to its timeout to finish. When a run fails, it's abandoned so the error shows at once, unless the Suggester ignores cancellation or is stuck in a thread.
 - A real model would send the transcript off the machine, so like a hosted STT engine it must be selected explicitly and print a startup warning.
 
+## Transcripts
+
+- `live` and `transcribe` save their Turns to a plain UTF-8 text file. Suggestions stay out, so the file holds only what was said.
+- Each command has its own subdirectory of `[transcript] dir`: `live` and `transcribe`. The default root, `transcripts`, is ignored by git. It sits in the repo rather than `~/Documents`, because that folder may sync to iCloud, which would break the local-first constraint.
+- Files are named by the local time at the start of the run, to the second, because a day can hold several meetings. `transcribe` prefixes the main input's name, and its header says the time is when the file was processed, since the date of the meeting is unknown.
+- A line is `[HH:MM:SS] [speaker] text`, using the Turn's start rounded down. Pipeline timestamps already count from the session start, so `00:00:00` is the start of capture or of the file, and a quiet start stays visible.
+- Lines follow closing order, never re-sorted, so the file matches the terminal.
+- The directory is created and checked with a real temporary write before an engine loads or capture starts, because permission bits can disagree with what happens. A failure there stops the run.
+- The file is created by the first Turn, so a run without speech leaves nothing. It never overwrites an existing file; a name collision counts as a write failure.
+- Each Turn is saved before it is printed, so a closed pipe can't lose it, and it is synced to disk at once, because a second Ctrl-C exits through `os._exit` and a power cut would lose anything less.
+- A write failure during a run is reported once, and the Turns keep printing. A call in progress matters more than its file.
+- Tests run from a scratch directory, and a run fails if the real `transcripts/` changed.
+
 ## Capture wire format
 
 The Swift CLI writes logs to stderr, and fixed-size records to stdout, resampled to 16 kHz mono on the Swift side:
@@ -101,6 +116,8 @@ Stop after each and report what works, what doesn't, and the main risks (latency
 3. STT worker and turn aggregator, printing speaker-tagged Turns from a WAV, with a `--stream-label` flag to treat the file as `system` or `mic`.
 4. Swift capture CLI and `MacCaptureSource`, with both labeled Streams. Document the Screen Recording and Microphone permissions.
 5. Stub `Suggester` interface (recent Turns in, short suggestions out) with a dummy implementation, wired to "Client Turn closed". No real LLM call.
+
+6. Save each run's Turns to a Transcript, and accept MP3 wherever `FileSource` is used.
 
 ## Working agreements
 
@@ -138,6 +155,8 @@ Live capture, playing a `say` phrase through the speakers at low volume:
 - Without headphones, the Client's words can also appear as Me.
 - macOS can make AirPods the default input whenever they connect, and speech from their microphone transcribes badly. Capture follows the default input, so choose the MacBook microphone in Sound settings.
 - Non-call audio on the computer counts as the Client.
+- An MP3 cut short gives a normal Transcript of what exists, and nothing says audio is missing.
+- `live` reads its start time before the engine loads, so a slow model load makes the Transcript's date and time slightly earlier than the true start of capture.
 - A cap split landing just after speech ends can shorten that Segment's post-roll. It's rare, and it only removes audio after the last voiced frame.
 - If the Python side stops reading, such as when the terminal is paused, the Swift CLI's write queue grows by about 650 MB an hour. Nothing is lost, and nothing limits it.
 - A multi-channel interface with plain numbered channels is heard through its first channel only.
