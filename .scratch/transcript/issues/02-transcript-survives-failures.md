@@ -4,11 +4,11 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A directory that can't be created or written prints `error: ...` and exits 1 before the engine loads.
-- [ ] Each Turn is flushed as soon as it closes: the fake engine's next call can read the previous Turn from the file.
-- [ ] A Turn is saved before it is printed, so a closed pipe still leaves it in the file.
-- [ ] Turns closed before a failed run stay in the file, and the run still reports its failure as before.
-- [ ] A write failure during a run prints one error to stderr, attempts no further writes, keeps printing Turns, and leaves the exit code at 0.
-- [ ] An existing file is never overwritten; a name collision counts as a write failure.
+- [x] A directory that can't be created or written prints `error: ...` and exits 1 before the engine loads.
+- [x] Each Turn is flushed as soon as it closes: the fake engine's next call can read the previous Turn from the file.
+- [x] A Turn is saved before it is printed, so a closed pipe still leaves it in the file.
+- [x] Turns closed before a failed run stay in the file, and the run still reports its failure as before.
+- [x] A write failure during a run prints one error to stderr, attempts no further writes, keeps printing Turns, and leaves the exit code at 0.
+- [x] An existing file is never overwritten; a name collision counts as a write failure.

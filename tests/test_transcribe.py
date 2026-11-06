@@ -541,3 +541,188 @@ def test_transcripts_can_be_turned_off(
 
     assert not root.exists()
     assert "Transcript" not in capsys.readouterr().err
+
+
+def _must_not_load_an_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    def must_not_load(_: SttConfig) -> None:
+        raise AssertionError("loaded a model although the Transcript can't be saved")
+
+    monkeypatch.setattr("rt_speech.transcribe.make_transcriber", must_not_load)
+
+
+def test_a_directory_that_cant_be_created_stops_the_run_before_the_engine_loads(
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _must_not_load_an_engine(monkeypatch)
+    blocker = tmp_path / "transcripts"
+    blocker.write_text("a file where the directory should go")
+    config, _ = _transcript_config(tmp_path)
+
+    assert main([str(speech_wav), "--config", str(config)]) == 1
+
+    assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_a_directory_that_cant_be_written_stops_the_run_before_the_engine_loads(
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _must_not_load_an_engine(monkeypatch)
+    config, root = _transcript_config(tmp_path)
+    (root / "transcribe").mkdir(parents=True)
+    (root / "transcribe").chmod(0o500)
+
+    try:
+        code = main([str(speech_wav), "--config", str(config)])
+    finally:
+        (root / "transcribe").chmod(0o700)
+
+    assert code == 1
+    assert capsys.readouterr().err.startswith("error: ")
+
+
+@pytest.fixture
+def two_phrases_wav(speech_wav: Path, tmp_path: Path) -> Path:
+    """Speech, a pause long enough to close the Turn, and the same speech again."""
+    with wave.open(str(speech_wav), "rb") as wav:
+        speech = wav.readframes(wav.getnframes())
+    path = tmp_path / "two.wav"
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(SAMPLE_RATE)
+        wav.writeframes(speech + bytes(2 * SAMPLE_RATE * 4) + speech)
+    return path
+
+
+def test_each_turn_is_on_disk_before_the_next_step(
+    two_phrases_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, root = _transcript_config(tmp_path)
+    seen: list[str] = []
+
+    class ReadingEngine:
+        def transcribe(
+            self, pcm: NDArray[np.float32], language: str | None
+        ) -> list[TranscriptPiece]:
+            files = list(root.rglob("*.txt"))
+            seen.append(files[0].read_text(encoding="utf-8") if files else "")
+            return [TranscriptPiece(f"phrase{len(seen)}")]
+
+    monkeypatch.setattr(
+        "rt_speech.transcribe.make_transcriber", lambda _: ReadingEngine()
+    )
+
+    assert main([str(two_phrases_wav), "--config", str(config)]) == 0
+
+    assert seen[0] == ""
+    assert seen[1].endswith("[00:00:00] [client] phrase1\n")
+
+
+class ClosedPipe:
+    def write(self, _: str) -> int:
+        raise BrokenPipeError
+
+    def flush(self) -> None:
+        raise BrokenPipeError
+
+
+def test_a_turn_is_saved_before_it_is_printed(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, root = _transcript_config(tmp_path)
+    monkeypatch.setattr("sys.stdout", ClosedPipe())
+
+    assert main([str(speech_wav), "--config", str(config)], now=lambda: STARTED) == 0
+
+    saved = root / "transcribe" / "en_2026-11-06_14-30-05.txt"
+    assert saved.read_text(encoding="utf-8").endswith("[client] phrase1\n")
+
+
+def test_turns_closed_before_a_failed_run_stay_in_the_file(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, root = _transcript_config(tmp_path)
+    closing = _closing(Turn(Speaker.CLIENT, "before", 1.0, 2.0))
+
+    async def closes_then_fails(*args: object, **kwargs: object) -> None:
+        await closing(*args, **kwargs)
+        raise OSError("device gone")
+
+    monkeypatch.setattr("rt_speech.transcribe.run_pipeline", closes_then_fails)
+
+    code = main([str(speech_wav), "--config", str(config)], now=lambda: STARTED)
+
+    assert code == 1
+    assert "device gone" in capsys.readouterr().err
+    saved = root / "transcribe" / "en_2026-11-06_14-30-05.txt"
+    assert saved.read_text(encoding="utf-8").endswith("[00:00:01] [client] before\n")
+
+
+def test_a_write_failure_mid_run_is_reported_once_and_turns_keep_printing(
+    two_phrases_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, root = _transcript_config(tmp_path, '[suggester]\nengine = "off"\n')
+    directory = root / "transcribe"
+    calls = 0
+
+    class LockingEngine:
+        def transcribe(
+            self, pcm: NDArray[np.float32], language: str | None
+        ) -> list[TranscriptPiece]:
+            nonlocal calls
+            calls += 1
+            directory.chmod(0o500)
+            return [TranscriptPiece(f"phrase{calls}")]
+
+    monkeypatch.setattr(
+        "rt_speech.transcribe.make_transcriber", lambda _: LockingEngine()
+    )
+
+    try:
+        code = main([str(two_phrases_wav), "--config", str(config)])
+    finally:
+        directory.chmod(0o700)
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert captured.out == "[client] phrase1\n[client] phrase2\n"
+    assert captured.err.count("can't save the Transcript") == 1
+    assert list(directory.iterdir()) == []
+
+
+def test_an_existing_transcript_is_never_overwritten(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, root = _transcript_config(tmp_path)
+    taken = root / "transcribe" / "en_2026-11-06_14-30-05.txt"
+    taken.parent.mkdir(parents=True)
+    taken.write_text("an earlier meeting\n", encoding="utf-8")
+
+    code = main([str(speech_wav), "--config", str(config)], now=lambda: STARTED)
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert taken.read_text(encoding="utf-8") == "an earlier meeting\n"
+    assert "can't save the Transcript" in captured.err
+    assert "[client] phrase1" in captured.out

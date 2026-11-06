@@ -21,7 +21,7 @@ from rt_speech.silero_vad import SileroVad
 from rt_speech.stt import Transcriber
 from rt_speech.stt_engines import SttSetupError, make_transcriber
 from rt_speech.suggester import SuggestionTrigger, make_suggester
-from rt_speech.transcript import Transcript, open_transcript
+from rt_speech.transcript import Transcript, TranscriptError, open_transcript
 from rt_speech.turns import Turn
 
 _INTERRUPTED = 130
@@ -110,7 +110,11 @@ def run_and_print(
         return _INTERRUPTED
 
     try:
-        asyncio.run(_run(source, transcriber, config, transcript))
+        try:
+            asyncio.run(_run(source, transcriber, config, transcript))
+        finally:
+            if transcript is not None:
+                transcript.close()
     except BrokenPipeError:
         # The reader of our output left, such as `| head`. Nothing more to say, and
         # the interpreter's final flush of stdout mustn't complain either.
@@ -163,13 +167,17 @@ def main(
         source_line = f"Файл {args.input.name}, обработан"
     else:
         source_line = f"Файлы {args.input.name} и {args.other.name}, обработаны"
-    transcript = open_transcript(
-        config.transcript,
-        subdir="transcribe",
-        name_prefix=f"{args.input.stem}_",
-        header=lambda when: f"{source_line} {when}",
-        started=now(),
-    )
+    try:
+        transcript = open_transcript(
+            config.transcript,
+            subdir="transcribe",
+            name_prefix=f"{args.input.stem}_",
+            header=lambda when: f"{source_line} {when}",
+            started=now(),
+        )
+    except TranscriptError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     return run_and_print(source, config, transcript)
 
 
