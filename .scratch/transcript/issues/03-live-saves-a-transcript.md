@@ -4,10 +4,10 @@
 
 **Blocked by:** 01, 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] With a fake capture source and fake engine, a run creates `YYYY-MM-DD_HH-MM-SS.txt` in the `live` subdirectory.
-- [ ] The file starts with `Встреча YYYY-MM-DD HH:MM:SS` and a blank line, followed by Turns in the shared line format.
-- [ ] Timecodes count from the start of capture, using the pipeline's timestamps.
-- [ ] A directory that can't be used prints `error: ...` and exits 1 before capture starts.
-- [ ] `[transcript] enabled = false` saves nothing.
+- [x] With a fake capture source and fake engine, a run creates `YYYY-MM-DD_HH-MM-SS.txt` in the `live` subdirectory.
+- [x] The file starts with `Встреча YYYY-MM-DD HH:MM:SS` and a blank line, followed by Turns in the shared line format.
+- [x] Timecodes count from the start of capture, using the pipeline's timestamps.
+- [x] A directory that can't be used prints `error: ...` and exits 1 before capture starts.
+- [x] `[transcript] enabled = false` saves nothing.
