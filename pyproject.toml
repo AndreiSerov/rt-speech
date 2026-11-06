@@ -36,4 +36,5 @@ markers = ["manual: needs real audio hardware or permissions; run with -m manual
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
+    "ruff>=0.17.4",
 ]

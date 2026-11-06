@@ -29,4 +29,5 @@ class Frame(NamedTuple):
 class AudioSource(Protocol):
     """Anything that produces frames: a replayed file or live capture."""
 
-    def __aiter__(self) -> AsyncGenerator[Frame, None]: ...
+    # Consumers call aclose() to stop a source early, which AsyncIterator lacks.
+    def __aiter__(self) -> AsyncGenerator[Frame, None]: ...  # noqa: PYI058

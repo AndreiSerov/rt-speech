@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import random
 from collections.abc import AsyncGenerator, AsyncIterator
 
@@ -151,7 +152,7 @@ def test_a_long_monologue_is_split_at_the_cap_without_losing_audio() -> None:
     assert all(s.pcm.size <= 100 * FRAME_SAMPLES for s in segments)
     assert segments[0].start == 0.0
     assert segments[-1].end == 250 * FRAME_SECONDS
-    for earlier, later in zip(segments, segments[1:], strict=False):
+    for earlier, later in itertools.pairwise(segments):
         assert earlier.end == pytest.approx(later.start)
     assert sum(s.pcm.size for s in segments) == 250 * FRAME_SAMPLES
 
@@ -369,7 +370,7 @@ def test_sustained_speech_is_never_lost_and_cuts_never_overlap(seed: int) -> Non
 
     segments = run(levels)
 
-    for earlier, later in zip(segments, segments[1:], strict=False):
+    for earlier, later in itertools.pairwise(segments):
         assert earlier.end <= later.start + 1e-9  # Float rounding at a shared edge.
     assert all(s.pcm.size <= 100 * FRAME_SAMPLES for s in segments)
     covered = [

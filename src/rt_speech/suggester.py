@@ -110,6 +110,6 @@ class SuggestionTrigger:
         try:
             for suggestion in suggestions:
                 self._on_suggestion(suggestion)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - re-raised by _raise_output_failure
             # Nothing awaits this task, so the next call to on_turn or finish raises it.
             self._output_failure = e

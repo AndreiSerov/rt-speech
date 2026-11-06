@@ -47,7 +47,7 @@ async def _until_stopped(
         except asyncio.CancelledError as e:
             if not stopping:
                 failure = e
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - re-raised once the frames have drained
             failure = e
         finally:
             frames.put_nowait(None)
