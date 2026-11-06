@@ -587,6 +587,70 @@ def test_a_directory_that_cant_be_written_stops_the_run_before_the_engine_loads(
     assert capsys.readouterr().err.startswith("error: ")
 
 
+def test_a_directory_that_only_looks_writable_stops_the_run_before_the_engine_loads(
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Permission bits can disagree with what really happens, as on a network volume.
+    monkeypatch.setattr("os.access", lambda *_, **__: True)
+    _must_not_load_an_engine(monkeypatch)
+    config, root = _transcript_config(tmp_path)
+    (root / "transcribe").mkdir(parents=True)
+    (root / "transcribe").chmod(0o500)
+
+    try:
+        code = main([str(speech_wav), "--config", str(config)])
+    finally:
+        (root / "transcribe").chmod(0o700)
+
+    assert code == 1
+    assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_checking_the_directory_leaves_nothing_behind(
+    engine: FakeEngine, tmp_path: Path
+) -> None:
+    silence = tmp_path / "silence.wav"
+    with wave.open(str(silence), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(SAMPLE_RATE)
+        wav.writeframes(bytes(2 * SAMPLE_RATE))
+    config, root = _transcript_config(tmp_path)
+
+    assert main([str(silence), "--config", str(config)]) == 0
+
+    assert list((root / "transcribe").iterdir()) == []
+
+
+def test_a_relative_directory_is_found_from_where_the_command_runs(
+    engine: FakeEngine, speech_wav: Path, tmp_path: Path
+) -> None:
+    config = tmp_path / "relative.toml"
+    config.write_text('[transcript]\ndir = "transcripts"\n')
+
+    assert main([str(speech_wav), "--config", str(config)]) == 0
+
+    assert len(list((tmp_path / "transcripts" / "transcribe").glob("en_*.txt"))) == 1
+
+
+def test_each_turn_is_synced_to_disk_so_a_power_cut_cannot_lose_it(
+    engine: FakeEngine,
+    two_phrases_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, _ = _transcript_config(tmp_path)
+    synced: list[int] = []
+    monkeypatch.setattr("os.fsync", synced.append)
+
+    assert main([str(two_phrases_wav), "--config", str(config)]) == 0
+
+    assert len(synced) == 2
+
+
 @pytest.fixture
 def two_phrases_wav(speech_wav: Path, tmp_path: Path) -> Path:
     """Speech, a pause long enough to close the Turn, and the same speech again."""

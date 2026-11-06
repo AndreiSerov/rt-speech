@@ -86,10 +86,10 @@ Every `live` and `transcribe` run saves a **Transcript**: a plain text file of i
 
 ### When things happen
 
-- Before the engine loads and before capture starts, the root and subdirectory are created and checked for writing. A failure there prints `error: ...` and exits 1.
+- Before the engine loads and before capture starts, the root and subdirectory are created and checked with a real temporary write, since permission bits can disagree with what happens. A failure there prints `error: ...` and exits 1.
 - The path is then printed to stderr, even though the file doesn't exist yet. Nothing is printed when `enabled` is false.
 - The file is created by the first Turn, so a run without speech leaves no file. It never overwrites an existing file; a name collision counts as a write failure.
-- Each Turn is flushed to the operating system before the next step, because a second Ctrl-C exits through `os._exit` and skips all cleanup.
+- Each Turn is flushed and synced to disk before the next step, because a second Ctrl-C exits through `os._exit` and skips all cleanup, and a power cut would lose what only reached the operating system. Turns are rare enough that the sync costs nothing noticeable.
 - Each Turn is saved before it is printed, so a closed pipe can't lose it.
 - After a write failure during a run, one error goes to stderr, nothing further is attempted for that run, Turns keep printing, and the exit code is unaffected. This failure must not reach the existing handler that turns an `OSError` into exit code 1.
 - The local time is read when the command starts, just before capture. That small offset from timecode zero is acceptable.
@@ -113,7 +113,7 @@ Every `live` and `transcribe` run saves a **Transcript**: a plain text file of i
 - Flushing is tested by having the fake engine read the Transcript on its next call and find the previous Turn. A mid-run write failure is tested by having the fake engine make the directory unwritable: one error, Turns keep printing, exit code 0.
 - The start time is controlled in tests, so names and headers are checked exactly.
 - MP3 test files are built in the tests with PyAV from synthetic audio. No audio files are added to the repo.
-- **The test suite must not write to the real Transcript directory.** Existing tests call `main()` with the real config file, so they need a guard, and a run of the suite must leave no `transcripts/` directory behind.
+- **The test suite must not write to the real Transcript directory.** Every test runs from a scratch directory holding a copy of the committed config, and the run fails if the real directory changed.
 - Config validation follows `test_config.py`.
 - A real call through `live` stays a `manual` check for the user.
 

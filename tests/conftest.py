@@ -1,5 +1,7 @@
+import shutil
 import subprocess
 import wave
+from collections.abc import Iterator
 from pathlib import Path
 
 import av
@@ -8,28 +10,34 @@ import pytest
 from numpy.typing import NDArray
 
 from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE
-from rt_speech.config import Config, TranscriptConfig, load_config
 
-_DEFAULT_TRANSCRIPT_DIR = TranscriptConfig().dir
+_REPO_ROOT = Path(__file__).parent.parent
+
+
+def _real_transcripts() -> set[Path] | None:
+    """The files in the repo's Transcript directory, or None if it's absent."""
+    root = _REPO_ROOT / "transcripts"
+    if not root.exists():
+        return None
+    return {path.relative_to(root) for path in root.rglob("*") if path.is_file()}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def the_real_transcripts_stay_untouched() -> Iterator[None]:
+    """Fails the run if anything got past `run_from_a_scratch_directory`."""
+    before = _real_transcripts()
+    yield
+    assert _real_transcripts() == before, "the tests touched the real transcripts/"
 
 
 @pytest.fixture(autouse=True)
-def keep_transcripts_out_of_the_repo(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+def run_from_a_scratch_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Tests call `main()` with the committed config, whose Transcript directory is
-    relative to the repo. A config that doesn't choose its own is sent to a temp dir."""
-    safe = tmp_path_factory.mktemp("transcripts")
-
-    def guarded(path: Path) -> Config:
-        config = load_config(path)
-        if config.transcript.dir != _DEFAULT_TRANSCRIPT_DIR:
-            return config
-        moved = config.transcript.model_copy(update={"dir": safe})
-        return config.model_copy(update={"transcript": moved})
-
-    for module in ("transcribe", "live"):
-        monkeypatch.setattr(f"rt_speech.{module}.load_config", guarded, raising=False)
+    """A relative [transcript] dir and the default --config both resolve from where a
+    command runs, so each test runs from a scratch copy of the committed config."""
+    shutil.copy(_REPO_ROOT / "config.toml", tmp_path / "config.toml")
+    monkeypatch.chdir(tmp_path)
 
 
 def _say(path: Path, text: str, voice: str | None = None) -> Path:
