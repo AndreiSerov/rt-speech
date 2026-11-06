@@ -1,4 +1,4 @@
-"""Prints speaker-tagged Turns and Suggestions from WAV files.
+"""Prints speaker-tagged Turns and Suggestions from WAV or MP3 files.
 
 Usage: python -m rt_speech.transcribe input.wav --stream-label system
 """
@@ -119,6 +119,10 @@ def run_and_print(
         # The reader of our output left, such as `| head`. Nothing more to say, and
         # the interpreter's final flush of stdout mustn't complain either.
         _silence_stdout()
+    except FileSourceError as e:
+        # A file went bad partway. What was heard has been printed and saved already.
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     except OSError as e:
         print(f"error: {e}", file=sys.stderr)
         # Every print flushes, so anything still buffered already failed to write, and
@@ -132,7 +136,9 @@ def main(
     argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = datetime.now
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path, help="16 kHz mono 16-bit WAV file")
+    parser.add_argument(
+        "input", type=Path, help="16 kHz mono 16-bit WAV file, or an MP3 of any format"
+    )
     parser.add_argument(
         "--stream-label",
         choices=[stream.value for stream in Stream],
@@ -140,7 +146,9 @@ def main(
         help="which Stream the input plays on (default: system, the Client)",
     )
     parser.add_argument(
-        "--other", type=Path, help="a second WAV file, played on the other Stream"
+        "--other",
+        type=Path,
+        help="a second WAV or MP3 file, played on the other Stream",
     )
     parser.add_argument(
         "--language",

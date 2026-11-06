@@ -1,4 +1,4 @@
-"""Dumps each Segment of a WAV file as its own WAV, to judge the cuts by ear.
+"""Dumps each Segment of a WAV or MP3 file as its own WAV, to judge the cuts by ear.
 
 Usage: python -m rt_speech.debug_segment input.wav --out segments/
 """

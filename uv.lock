@@ -1396,6 +1396,7 @@ name = "rt-speech"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "av" },
     { name = "numpy" },
     { name = "onnxruntime" },
     { name = "pydantic" },
@@ -1417,6 +1418,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "av", specifier = ">=19.0.2" },
     { name = "faster-whisper", marker = "extra == 'faster'", specifier = ">=1.2.1" },
     { name = "mlx-whisper", marker = "extra == 'mlx'", specifier = ">=0.4.3" },
     { name = "numpy", specifier = ">=2.5.4" },

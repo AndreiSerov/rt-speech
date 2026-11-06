@@ -2,6 +2,7 @@ import subprocess
 import wave
 from pathlib import Path
 
+import av
 import numpy as np
 import pytest
 from numpy.typing import NDArray
@@ -68,3 +69,25 @@ def read_frames(path: Path) -> list[NDArray[np.float32]]:
     samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
     usable = samples.size - samples.size % FRAME_SAMPLES
     return list(samples[:usable].reshape(-1, FRAME_SAMPLES))
+
+
+def write_mp3(
+    path: Path, samples: np.ndarray, *, rate: int = 44_100, channels: int = 2
+) -> Path:
+    """Encodes `samples` (floats in -1..1, at `rate`) as an MP3, the same on every channel."""
+    layout = "stereo" if channels == 2 else "mono"
+    planes = np.vstack([samples] * channels).astype(np.float32)
+    frame = av.AudioFrame.from_ndarray(planes, format="fltp", layout=layout)
+    frame.sample_rate = rate
+    with av.open(str(path), "w", format="mp3") as container:
+        stream = container.add_stream("mp3", rate=rate)
+        stream.layout = layout
+        for packet in stream.encode(frame):
+            container.mux(packet)
+        for packet in stream.encode(None):
+            container.mux(packet)
+    return path
+
+
+def tone(seconds: float, rate: int, hz: float = 440.0) -> np.ndarray:
+    return 0.5 * np.sin(2 * np.pi * hz * np.arange(int(seconds * rate)) / rate)

@@ -8,6 +8,7 @@ import pytest
 
 from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE, AudioSource, Frame, Stream
 from rt_speech.file_source import FileSource, FileSourceError
+from tests.conftest import tone, write_mp3
 
 FRAME_SECONDS = FRAME_SAMPLES / SAMPLE_RATE
 
@@ -25,6 +26,12 @@ def write_wav(
         wav.setframerate(rate)
         wav.writeframes(np.asarray(samples, dtype="<i2").tobytes())
     return path
+
+
+def dominant_hz(frames: list[Frame]) -> float:
+    pcm = np.concatenate([frame.pcm for frame in frames])
+    spectrum = np.abs(np.fft.rfft(pcm))
+    return float(np.argmax(spectrum) * SAMPLE_RATE / pcm.size)
 
 
 def collect(source: AudioSource) -> list[Frame]:
@@ -216,3 +223,111 @@ def test_two_files_for_one_stream_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(FileSourceError, match="only one file"):
         FileSource([(a, Stream.MIC), (b, Stream.MIC)])
+
+
+def test_an_mp3_replays_as_16_khz_mono_frames(tmp_path: Path) -> None:
+    path = write_mp3(tmp_path / "a.mp3", tone(1.0, 44_100), rate=44_100, channels=2)
+
+    frames = collect(FileSource([(path, Stream.SYSTEM)]))
+
+    assert 30 <= len(frames) <= 36
+    for frame in frames:
+        assert frame.stream is Stream.SYSTEM
+        assert frame.pcm.shape == (FRAME_SAMPLES,)
+        assert frame.pcm.dtype == np.float32
+    assert [f.timestamp for f in frames[:3]] == [0.0, FRAME_SECONDS, 2 * FRAME_SECONDS]
+    assert dominant_hz(frames) == pytest.approx(440, abs=10)
+
+
+@pytest.mark.parametrize("rate", [8_000, 16_000, 22_050, 44_100, 48_000])
+@pytest.mark.parametrize("channels", [1, 2])
+def test_an_mp3_of_any_rate_and_channel_count_keeps_its_pitch_and_length(
+    tmp_path: Path, rate: int, channels: int
+) -> None:
+    path = write_mp3(tmp_path / "a.mp3", tone(2.0, rate), rate=rate, channels=channels)
+
+    frames = collect(FileSource([(path, Stream.MIC)]))
+
+    assert 61 <= len(frames) <= 68  # 2 s is 62.5 frames, plus the encoder's padding
+    assert dominant_hz(frames) == pytest.approx(440, abs=10)
+
+
+def test_the_tail_of_an_mp3_is_not_lost(tmp_path: Path) -> None:
+    quiet_then_loud = np.concatenate([np.zeros(22_050), tone(0.5, 44_100)])
+    path = write_mp3(tmp_path / "a.mp3", quiet_then_loud)
+
+    frames = collect(FileSource([(path, Stream.SYSTEM)]))
+
+    loud = [i for i, frame in enumerate(frames) if np.abs(frame.pcm).max() > 0.25]
+    # Half a second of tone is about 15 frames, and it ends at the end of the file.
+    assert 14 <= len(loud) <= 17
+    assert loud[-1] >= len(frames) - 3
+
+
+def test_the_mp3_extension_is_matched_in_any_case(tmp_path: Path) -> None:
+    path = write_mp3(tmp_path / "LOUD.MP3", tone(0.5, 44_100))
+
+    assert len(collect(FileSource([(path, Stream.SYSTEM)]))) > 10
+
+
+def test_an_mp3_and_a_wav_can_play_on_different_streams(tmp_path: Path) -> None:
+    mp3 = write_mp3(tmp_path / "a.mp3", tone(0.5, 44_100))
+    wav = write_wav(tmp_path / "b.wav", np.zeros(FRAME_SAMPLES * 3))
+
+    frames = collect(FileSource([(mp3, Stream.SYSTEM), (wav, Stream.MIC)]))
+
+    assert {f.stream for f in frames} == {Stream.SYSTEM, Stream.MIC}
+    assert [f.timestamp for f in frames] == sorted(f.timestamp for f in frames)
+
+
+def test_stopping_an_mp3_early_is_safe(tmp_path: Path) -> None:
+    path = write_mp3(tmp_path / "a.mp3", tone(2.0, 44_100))
+
+    async def first_frame() -> Frame:
+        async for frame in FileSource([(path, Stream.SYSTEM)]):
+            return frame
+        raise AssertionError("no frames")
+
+    assert asyncio.run(first_frame()).timestamp == 0.0
+
+
+def test_a_missing_mp3_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(FileSourceError, match="not found"):
+        FileSource([(tmp_path / "nope.mp3", Stream.SYSTEM)])
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(b"this is not audio at all, just text " * 100, id="text"),
+        pytest.param(b"ID3\x04\x00\x00\x00\x00\x00\x00", id="tag-only"),
+    ],
+)
+def test_an_mp3_without_audio_is_rejected_on_construction(
+    tmp_path: Path, content: bytes
+) -> None:
+    path = tmp_path / "a.mp3"
+    path.write_bytes(content)
+
+    with pytest.raises(FileSourceError, match=r"a\.mp3"):
+        FileSource([(path, Stream.SYSTEM)])
+
+
+def test_damage_partway_through_an_mp3_replays_what_came_before_then_fails(
+    tmp_path: Path,
+) -> None:
+    good = write_mp3(tmp_path / "good.mp3", tone(2.0, 44_100)).read_bytes()
+    path = tmp_path / "a.mp3"
+    path.write_bytes(good[:20_000] + bytes(4000) + good[24_000:])
+    source = FileSource([(path, Stream.SYSTEM)])
+    heard: list[Frame] = []
+
+    async def replay() -> None:
+        async for frame in source:
+            heard.append(frame)
+
+    with pytest.raises(FileSourceError, match=r"a\.mp3"):
+        asyncio.run(replay())
+
+    assert len(heard) > 10

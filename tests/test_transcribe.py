@@ -18,6 +18,7 @@ from rt_speech.stt import TranscriptPiece
 from rt_speech.stt_engines import SttSetupError
 from rt_speech.transcribe import InterruptHandler, main
 from rt_speech.turns import Speaker, Turn
+from tests.conftest import read_frames, write_mp3
 
 
 class FakeEngine:
@@ -726,3 +727,88 @@ def test_an_existing_transcript_is_never_overwritten(
     assert taken.read_text(encoding="utf-8") == "an earlier meeting\n"
     assert "can't save the Transcript" in captured.err
     assert "[client] phrase1" in captured.out
+
+
+@pytest.fixture
+def speech_mp3(speech_wav: Path, tmp_path: Path) -> Path:
+    """The `say` speech as a 16 kHz mono MP3."""
+    samples = np.concatenate(read_frames(speech_wav))
+    return write_mp3(tmp_path / "talk.mp3", samples, rate=SAMPLE_RATE, channels=1)
+
+
+def test_an_mp3_transcribes_end_to_end(
+    engine: FakeEngine,
+    speech_mp3: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, root = _transcript_config(tmp_path, '[suggester]\nengine = "off"\n')
+
+    code = main([str(speech_mp3), "--config", str(config)], now=lambda: STARTED)
+
+    assert code == 0
+    assert capsys.readouterr().out == "[client] phrase1\n"
+    saved = root / "transcribe" / "talk_2026-11-06_14-30-05.txt"
+    assert saved.read_text(encoding="utf-8").startswith(
+        "Файл talk.mp3, обработан 2026-11-06 14:30:05\n"
+    )
+
+
+def test_an_mp3_and_a_wav_play_on_the_two_streams(
+    engine: FakeEngine,
+    speech_mp3: Path,
+    russian_speech_wav: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main([str(speech_mp3), "--other", str(russian_speech_wav)])
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "[client]" in out and "[me]" in out
+
+
+def test_a_broken_mp3_fails_before_an_engine_loads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def must_not_load(_: SttConfig) -> None:
+        raise AssertionError("loaded a model for a file that can't be read")
+
+    monkeypatch.setattr("rt_speech.transcribe.make_transcriber", must_not_load)
+    broken = tmp_path / "broken.mp3"
+    broken.write_bytes(b"not audio " * 100)
+
+    assert main([str(broken)]) == 1
+
+    assert "broken.mp3" in capsys.readouterr().err
+
+
+def test_damage_partway_through_an_mp3_keeps_what_was_heard_and_exits_with_1(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    speech = np.concatenate(read_frames(speech_wav))
+    good = write_mp3(
+        tmp_path / "good.mp3",
+        np.concatenate([speech, np.zeros(SAMPLE_RATE * 3), speech]),
+        rate=SAMPLE_RATE,
+        channels=1,
+    ).read_bytes()
+    damaged = tmp_path / "damaged.mp3"
+    damaged.write_bytes(
+        good[: len(good) * 3 // 4] + bytes(4000) + good[len(good) * 3 // 4 + 4000 :]
+    )
+    config, root = _transcript_config(tmp_path, '[suggester]\nengine = "off"\n')
+
+    code = main([str(damaged), "--config", str(config)], now=lambda: STARTED)
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out.startswith("[client] phrase1\n")
+    assert captured.err.count("error: ") == 1
+    assert "Traceback" not in captured.err
+    saved = root / "transcribe" / "damaged_2026-11-06_14-30-05.txt"
+    assert "[client] phrase1" in saved.read_text(encoding="utf-8")
