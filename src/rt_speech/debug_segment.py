@@ -49,11 +49,7 @@ def _is_earlier_cut(path: Path) -> bool:
 
 def _run(input_path: Path, out: Path, config: Config) -> int:
     source = FileSource([(input_path, Stream.SYSTEM)], realtime=config.replay.realtime)
-    if (
-        _is_earlier_cut(input_path)
-        and out.exists()
-        and input_path.parent.samefile(out)
-    ):
+    if _is_earlier_cut(input_path) and out.exists() and input_path.parent.samefile(out):
         raise FileSourceError(
             f"{input_path} would be replaced by this run. Choose a different --out."
         )

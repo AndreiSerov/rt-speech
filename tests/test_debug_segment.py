@@ -71,7 +71,7 @@ def test_segments_hold_the_input_samples_exactly(
 
     with wave.open(str(speech_wav), "rb") as wav:
         original = np.frombuffer(wav.readframes(wav.getnframes()), "<i2")
-    first = sorted(out.glob("*.wav"))[0]
+    first = min(out.glob("*.wav"))
     start = float(first.stem.split("_")[2].split("s-")[0])
     with wave.open(str(first), "rb") as wav:
         cut = np.frombuffer(wav.readframes(wav.getnframes()), "<i2")
@@ -86,7 +86,7 @@ def test_an_input_that_is_an_earlier_cut_is_refused_and_kept(
 ) -> None:
     out = tmp_path / "segments"
     assert main([str(speech_wav), "--out", str(out)]) == 0
-    cut = sorted(out.glob("*.wav"))[0]
+    cut = min(out.glob("*.wav"))
 
     assert main([str(cut), "--out", str(out)]) == 1
 
@@ -99,7 +99,7 @@ def test_an_earlier_cut_is_kept_when_out_is_spelled_differently(
 ) -> None:
     out = tmp_path / "segments"
     assert main([str(speech_wav), "--out", str(out)]) == 0
-    cut = sorted(out.glob("*.wav"))[0]
+    cut = min(out.glob("*.wav"))
     other_spelling = out.with_name("SEGMENTS")
     if not other_spelling.exists():
         pytest.skip("needs a case-insensitive file system")

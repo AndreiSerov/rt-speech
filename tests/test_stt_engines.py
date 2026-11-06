@@ -21,7 +21,10 @@ ENGINES = ["mlx-whisper", "faster-whisper"]
 
 @pytest.mark.parametrize(
     ("engine", "module", "extra"),
-    [("mlx-whisper", "mlx_whisper", "mlx"), ("faster-whisper", "faster_whisper", "faster")],
+    [
+        ("mlx-whisper", "mlx_whisper", "mlx"),
+        ("faster-whisper", "faster_whisper", "faster"),
+    ],
 )
 def test_a_missing_engine_says_how_to_install_it(
     monkeypatch: pytest.MonkeyPatch, engine: str, module: str, extra: str

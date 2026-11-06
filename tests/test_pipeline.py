@@ -225,9 +225,7 @@ def test_a_growing_queue_logs_a_warning_and_drops_nothing(
         if number == 1:
             assert capture_done.wait(TIMEOUT)
 
-    config = CONFIG.model_copy(
-        update={"stt": SttConfig(queue_warning_segments=2)}
-    )
+    config = CONFIG.model_copy(update={"stt": SttConfig(queue_warning_segments=2)})
     speech = [LOUD] * 20 + [QUIET] * 40
     source = Script({Stream.SYSTEM: speech * 4}, capture_done.set)
 
@@ -240,7 +238,9 @@ def test_a_growing_queue_logs_a_warning_and_drops_nothing(
 
 def test_each_stream_uses_its_language() -> None:
     config = CONFIG.model_copy(
-        update={"stt": SttConfig(language="ru", system_language="auto", mic_language="en")}
+        update={
+            "stt": SttConfig(language="ru", system_language="auto", mic_language="en")
+        }
     )
     levels = {
         Stream.SYSTEM: [LOUD] * 20 + [QUIET] * 80,
@@ -348,9 +348,7 @@ def test_a_failing_turn_callback_stops_the_pipeline_without_hanging() -> None:
     source = Script({Stream.SYSTEM: [LOUD] * 20 + [QUIET] * 200})
 
     async def main() -> None:
-        await run_pipeline(
-            source, LoudnessDetector, FakeTranscriber(), CONFIG, explode
-        )
+        await run_pipeline(source, LoudnessDetector, FakeTranscriber(), CONFIG, explode)
 
     with pytest.raises(ValueError, match="subscriber broke"):
         asyncio.run(asyncio.wait_for(main(), TIMEOUT))

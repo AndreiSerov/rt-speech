@@ -186,7 +186,7 @@ async def segment_events(
                         s for s, g in segmenters.items() if g.in_speech
                     )
                     yield StreamClock(dict(reached), speaking)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - re-raised below, after the flush
         failure = e  # Speech already heard still counts, so flush first.
     for segmenter in segmenters.values():
         for segment in segmenter.flush():

@@ -53,7 +53,8 @@ def collect(source: MacCaptureSource) -> list[Frame]:
 
 def test_records_become_frames(tmp_path: Path) -> None:
     binary = fake_binary(
-        tmp_path, "record(stream=0, ts=1.5, value=0.25)\nrecord(stream=1, ts=2.5, value=-0.5)\n"
+        tmp_path,
+        "record(stream=0, ts=1.5, value=0.25)\nrecord(stream=1, ts=2.5, value=-0.5)\n",
     )
 
     first, second = collect(MacCaptureSource(binary))
@@ -122,7 +123,9 @@ def test_an_unknown_stream_is_an_error(tmp_path: Path) -> None:
 def test_its_stderr_goes_to_the_log(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    binary = fake_binary(tmp_path, 'print("device changed", file=sys.stderr, flush=True)\n')
+    binary = fake_binary(
+        tmp_path, 'print("device changed", file=sys.stderr, flush=True)\n'
+    )
 
     with caplog.at_level(logging.INFO):
         collect(MacCaptureSource(binary))
@@ -214,7 +217,9 @@ def real_binary() -> Path:
 def _dominant_hertz(frames: list[Frame]) -> float:
     samples = np.concatenate([f.pcm for f in frames])
     spectrum = np.abs(np.fft.rfft(samples))
-    return float(np.fft.rfftfreq(samples.size, 1 / SAMPLE_RATE)[int(np.argmax(spectrum))])
+    return float(
+        np.fft.rfftfreq(samples.size, 1 / SAMPLE_RATE)[int(np.argmax(spectrum))]
+    )
 
 
 def test_the_real_binary_produces_both_streams_over_the_wire(real_binary: Path) -> None:
@@ -281,11 +286,15 @@ class _LoudnessDetector:
 
 
 class _FixedTranscriber:
-    def transcribe(self, pcm: NDArray[np.float32], language: str | None) -> list[TranscriptPiece]:
+    def transcribe(
+        self, pcm: NDArray[np.float32], language: str | None
+    ) -> list[TranscriptPiece]:
         return [TranscriptPiece("heard")]
 
 
-def _run_live(binary: Path, stop_after_turn: bool = False) -> tuple[list[Turn], BaseException | None]:
+def _run_live(
+    binary: Path, stop_after_turn: bool = False
+) -> tuple[list[Turn], BaseException | None]:
     turns: list[Turn] = []
 
     async def run() -> None:
@@ -341,7 +350,9 @@ def test_stopping_the_pipeline_ends_the_process(tmp_path: Path) -> None:
         os.kill(int(pid_file.read_text()), 0)
 
 
-def test_a_capture_failure_keeps_what_was_heard_then_reports_itself(tmp_path: Path) -> None:
+def test_a_capture_failure_keeps_what_was_heard_then_reports_itself(
+    tmp_path: Path,
+) -> None:
     binary = fake_binary(
         tmp_path,
         # Failing mid-speech, so only the shutdown can close this Turn.
@@ -388,7 +399,9 @@ def test_capturing_system_audio_keeps_the_display_awake(real_binary: Path) -> No
     assert not _keeps_display_awake(process)
 
 
-def test_capturing_without_system_audio_lets_the_display_sleep(real_binary: Path) -> None:
+def test_capturing_without_system_audio_lets_the_display_sleep(
+    real_binary: Path,
+) -> None:
     process = subprocess.Popen(
         [real_binary, "--test-signal", "--no-system", "--duration", "30"],
         stdout=subprocess.DEVNULL,
