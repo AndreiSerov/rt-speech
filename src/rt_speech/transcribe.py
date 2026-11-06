@@ -50,7 +50,9 @@ class InterruptHandler:
     """The first Ctrl-C finishes what was heard. The second quits at once, because a
     stuck engine's worker thread would otherwise keep the process alive."""
 
-    def __init__(self, stop: asyncio.Event, force_exit: Callable[[int], object]) -> None:
+    def __init__(
+        self, stop: asyncio.Event, force_exit: Callable[[int], object]
+    ) -> None:
         self._stop = stop
         self._force_exit = force_exit
 

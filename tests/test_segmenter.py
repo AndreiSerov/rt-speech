@@ -256,9 +256,7 @@ def test_each_stream_is_segmented_independently() -> None:
 
 
 def test_open_segments_on_every_stream_are_flushed_at_the_end() -> None:
-    segments = collect_segments(
-        {Stream.SYSTEM: [LOUD] * 20, Stream.MIC: [LOUD] * 10}
-    )
+    segments = collect_segments({Stream.SYSTEM: [LOUD] * 20, Stream.MIC: [LOUD] * 10})
 
     assert sorted(s.stream for s in segments) == [Stream.MIC, Stream.SYSTEM]
 

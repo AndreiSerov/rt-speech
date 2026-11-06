@@ -58,7 +58,8 @@ def test_bad_config_is_rejected(tmp_path: Path, content: str, expected: str) -> 
 
 def test_suggester_settings_are_loaded(tmp_path: Path) -> None:
     path = write(
-        tmp_path, '[suggester]\nengine = "off"\nrecent_turns = 3\ntimeout_seconds = 2.5\n'
+        tmp_path,
+        '[suggester]\nengine = "off"\nrecent_turns = 3\ntimeout_seconds = 2.5\n',
     )
 
     suggester = load_config(path).suggester

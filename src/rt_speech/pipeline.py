@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 def _language_for(stream: Stream, config: SttConfig) -> str | None:
-    override = config.system_language if stream is Stream.SYSTEM else config.mic_language
+    override = (
+        config.system_language if stream is Stream.SYSTEM else config.mic_language
+    )
     language = override or config.language
     return None if language == "auto" else language
 
@@ -110,7 +112,9 @@ async def run_pipeline(
         language = _language_for(segment.stream, config.stt)
         started = time.monotonic()
         try:
-            pieces: list[TranscriptPiece] = await asyncio.get_running_loop().run_in_executor(
+            pieces: list[
+                TranscriptPiece
+            ] = await asyncio.get_running_loop().run_in_executor(
                 worker, transcriber.transcribe, segment.pcm, language
             )
         except Exception:
