@@ -33,6 +33,13 @@ uv run pytest            # everything that runs without audio hardware
 uv run --all-extras pytest -m manual  # tests that need real models or hardware
 ```
 
+## Lint and format
+
+```sh
+uv run ruff check
+uv run ruff format
+```
+
 ## Configuration
 
 Settings live in [`config.toml`](config.toml). Unknown keys and invalid values are errors, so a typo can't silently fall back to a default. Keep secrets out of this file; they belong in `.env`, which git ignores.
