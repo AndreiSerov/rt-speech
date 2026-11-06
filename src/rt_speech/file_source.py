@@ -74,7 +74,8 @@ def _decode_mp3(path: Path) -> Iterator[np.ndarray]:
                 yield resampled.to_ndarray().reshape(-1)
     except FileNotFoundError:
         raise FileSourceError(f"{path}: file not found") from None
-    except (OSError, av.error.FFmpegError) as e:
+    # ValueError: the resampler refuses a file whose format changes partway through.
+    except (OSError, ValueError, av.error.FFmpegError) as e:
         raise FileSourceError(f"{path}: can't decode this MP3 ({e})") from e
 
 

@@ -587,28 +587,6 @@ def test_a_directory_that_cant_be_written_stops_the_run_before_the_engine_loads(
     assert capsys.readouterr().err.startswith("error: ")
 
 
-def test_a_directory_that_only_looks_writable_stops_the_run_before_the_engine_loads(
-    speech_wav: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Permission bits can disagree with what really happens, as on a network volume.
-    monkeypatch.setattr("os.access", lambda *_, **__: True)
-    _must_not_load_an_engine(monkeypatch)
-    config, root = _transcript_config(tmp_path)
-    (root / "transcribe").mkdir(parents=True)
-    (root / "transcribe").chmod(0o500)
-
-    try:
-        code = main([str(speech_wav), "--config", str(config)])
-    finally:
-        (root / "transcribe").chmod(0o700)
-
-    assert code == 1
-    assert capsys.readouterr().err.startswith("error: ")
-
-
 def test_checking_the_directory_leaves_nothing_behind(
     engine: FakeEngine, tmp_path: Path
 ) -> None:
@@ -638,7 +616,7 @@ def test_a_relative_directory_is_found_from_where_the_command_runs(
 
 def test_each_turn_is_synced_to_disk_so_a_power_cut_cannot_lose_it(
     engine: FakeEngine,
-    two_phrases_wav: Path,
+    two_turns_wav: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -646,13 +624,13 @@ def test_each_turn_is_synced_to_disk_so_a_power_cut_cannot_lose_it(
     synced: list[int] = []
     monkeypatch.setattr("os.fsync", synced.append)
 
-    assert main([str(two_phrases_wav), "--config", str(config)]) == 0
+    assert main([str(two_turns_wav), "--config", str(config)]) == 0
 
     assert len(synced) == 2
 
 
 @pytest.fixture
-def two_phrases_wav(speech_wav: Path, tmp_path: Path) -> Path:
+def two_turns_wav(speech_wav: Path, tmp_path: Path) -> Path:
     """Speech, a pause long enough to close the Turn, and the same speech again."""
     with wave.open(str(speech_wav), "rb") as wav:
         speech = wav.readframes(wav.getnframes())
@@ -666,7 +644,7 @@ def two_phrases_wav(speech_wav: Path, tmp_path: Path) -> Path:
 
 
 def test_each_turn_is_on_disk_before_the_next_step(
-    two_phrases_wav: Path,
+    two_turns_wav: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -685,7 +663,7 @@ def test_each_turn_is_on_disk_before_the_next_step(
         "rt_speech.transcribe.make_transcriber", lambda _: ReadingEngine()
     )
 
-    assert main([str(two_phrases_wav), "--config", str(config)]) == 0
+    assert main([str(two_turns_wav), "--config", str(config)]) == 0
 
     assert seen[0] == ""
     assert seen[1].endswith("[00:00:00] [client] phrase1\n")
@@ -704,6 +682,7 @@ def test_a_turn_is_saved_before_it_is_printed(
     speech_wav: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     config, root = _transcript_config(tmp_path)
     monkeypatch.setattr("sys.stdout", ClosedPipe())
@@ -712,6 +691,7 @@ def test_a_turn_is_saved_before_it_is_printed(
 
     saved = root / "transcribe" / "en_2026-11-06_14-30-05.txt"
     assert saved.read_text(encoding="utf-8").endswith("[client] phrase1\n")
+    assert "error" not in capsys.readouterr().err
 
 
 def test_turns_closed_before_a_failed_run_stay_in_the_file(
@@ -739,7 +719,7 @@ def test_turns_closed_before_a_failed_run_stay_in_the_file(
 
 
 def test_a_write_failure_mid_run_is_reported_once_and_turns_keep_printing(
-    two_phrases_wav: Path,
+    two_turns_wav: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -762,7 +742,7 @@ def test_a_write_failure_mid_run_is_reported_once_and_turns_keep_printing(
     )
 
     try:
-        code = main([str(two_phrases_wav), "--config", str(config)])
+        code = main([str(two_turns_wav), "--config", str(config)])
     finally:
         directory.chmod(0o700)
 

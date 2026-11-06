@@ -68,7 +68,9 @@ def _run(input_path: Path, out: Path, config: Config) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path, help="16 kHz mono 16-bit WAV file")
+    parser.add_argument(
+        "input", type=Path, help="16 kHz mono 16-bit WAV file, or an MP3 of any format"
+    )
     parser.add_argument("--out", type=Path, required=True, help="output directory")
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     args = parser.parse_args(argv)

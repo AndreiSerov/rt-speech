@@ -314,6 +314,29 @@ def test_an_mp3_without_audio_is_rejected_on_construction(
         FileSource([(path, Stream.SYSTEM)])
 
 
+def _without_id3_tag(data: bytes) -> bytes:
+    """An ID3v2 tag in mid-stream is its own kind of damage, so a splice drops it."""
+    assert data[:3] == b"ID3"
+    size = 0
+    for byte in data[6:10]:
+        size = size << 7 | byte
+    return data[10 + size :]
+
+
+def test_a_format_change_partway_through_an_mp3_is_a_clean_error(
+    tmp_path: Path,
+) -> None:
+    first = write_mp3(tmp_path / "a.mp3", tone(2.0, 44_100), rate=44_100)
+    second = write_mp3(tmp_path / "b.mp3", tone(2.0, 48_000), rate=48_000)
+    spliced = tmp_path / "spliced.mp3"
+    spliced.write_bytes(first.read_bytes() + _without_id3_tag(second.read_bytes()))
+
+    source = FileSource([(spliced, Stream.SYSTEM)])
+
+    with pytest.raises(FileSourceError, match=r"spliced\.mp3"):
+        collect(source)
+
+
 def test_damage_partway_through_an_mp3_replays_what_came_before_then_fails(
     tmp_path: Path,
 ) -> None:

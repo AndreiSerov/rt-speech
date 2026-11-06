@@ -19,7 +19,7 @@ wheels/
 .env
 
 ### Transcripts (private conversations) ###
-/transcripts/
+transcripts/
 
 ### Swift ###
 .build/
