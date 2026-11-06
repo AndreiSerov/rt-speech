@@ -18,6 +18,9 @@ wheels/
 .venv/
 .env
 
+### Transcripts (private conversations) ###
+/transcripts/
+
 ### Swift ###
 .build/
 

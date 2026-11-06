@@ -31,3 +31,7 @@ _Avoid_: Message, line, replica
 **Suggestion**:
 A short thing Me could say next, produced from recent Turns when a Client Turn closes.
 _Avoid_: Hint, reply, prompt
+
+**Transcript**:
+The Turns of one `live` or `transcribe` run, saved as a plain text file on this computer. Holds only what was said, never Suggestions.
+_Avoid_: Log, recording, history

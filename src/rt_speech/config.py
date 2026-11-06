@@ -102,6 +102,11 @@ class CaptureConfig(_Section):
     binary: Path = Path("native/capture/.build/release/rt-capture")
 
 
+class TranscriptConfig(_Section):
+    enabled: bool = True
+    dir: Path = Path("transcripts")
+
+
 class Config(_Section):
     capture: CaptureConfig = CaptureConfig()
     logging: LoggingConfig = LoggingConfig()
@@ -109,6 +114,7 @@ class Config(_Section):
     segmenter: SegmenterConfig = SegmenterConfig()
     stt: SttConfig = SttConfig()
     suggester: SuggesterConfig = SuggesterConfig()
+    transcript: TranscriptConfig = TranscriptConfig()
     turns: TurnsConfig = TurnsConfig()
 
 

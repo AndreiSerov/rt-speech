@@ -53,3 +53,7 @@ pause_ms = 1800  # silence that closes a Turn
 engine = "dummy"       # "dummy" prints placeholder Suggestions, "off" prints none
 recent_turns = 10      # how many Turns a Suggestion is based on
 timeout_seconds = 10   # how long to wait for one before giving up
+
+[transcript]
+enabled = true          # false saves no Transcript from live or transcribe
+dir = "transcripts"     # relative to where you run from; keep it out of synced folders

@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 
 from rt_speech.audio import AudioSource, Stream
@@ -20,6 +21,7 @@ from rt_speech.silero_vad import SileroVad
 from rt_speech.stt import Transcriber
 from rt_speech.stt_engines import SttSetupError, make_transcriber
 from rt_speech.suggester import SuggestionTrigger, make_suggester
+from rt_speech.transcript import Transcript, open_transcript
 from rt_speech.turns import Turn
 
 _INTERRUPTED = 130
@@ -64,7 +66,12 @@ class InterruptHandler:
         print("Finishing what was heard. Ctrl-C again to quit now.", file=sys.stderr)
 
 
-async def _run(source: AudioSource, transcriber: Transcriber, config: Config) -> None:
+async def _run(
+    source: AudioSource,
+    transcriber: Transcriber,
+    config: Config,
+    transcript: Transcript | None,
+) -> None:
     stop = asyncio.Event()
     asyncio.get_running_loop().add_signal_handler(
         signal.SIGINT, InterruptHandler(stop, os._exit)
@@ -76,6 +83,8 @@ async def _run(source: AudioSource, transcriber: Transcriber, config: Config) ->
     )
 
     def on_turn(turn: Turn) -> None:
+        if transcript is not None:
+            transcript.save(turn)
         _print_turn(turn)
         suggestions.on_turn(turn)
 
@@ -88,7 +97,9 @@ async def _run(source: AudioSource, transcriber: Transcriber, config: Config) ->
     await suggestions.finish()
 
 
-def run_and_print(source: AudioSource, config: Config) -> int:
+def run_and_print(
+    source: AudioSource, config: Config, transcript: Transcript | None = None
+) -> int:
     """Loads the engine and prints Turns from `source`. Returns the exit code."""
     try:
         transcriber = make_transcriber(config.stt)
@@ -99,7 +110,7 @@ def run_and_print(source: AudioSource, config: Config) -> int:
         return _INTERRUPTED
 
     try:
-        asyncio.run(_run(source, transcriber, config))
+        asyncio.run(_run(source, transcriber, config, transcript))
     except BrokenPipeError:
         # The reader of our output left, such as `| head`. Nothing more to say, and
         # the interpreter's final flush of stdout mustn't complain either.
@@ -113,7 +124,9 @@ def run_and_print(source: AudioSource, config: Config) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = datetime.now
+) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="16 kHz mono 16-bit WAV file")
     parser.add_argument(
@@ -146,7 +159,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (ConfigError, FileSourceError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    return run_and_print(source, config)
+    if args.other is None:
+        source_line = f"Файл {args.input.name}, обработан"
+    else:
+        source_line = f"Файлы {args.input.name} и {args.other.name}, обработаны"
+    transcript = open_transcript(
+        config.transcript,
+        subdir="transcribe",
+        name_prefix=f"{args.input.stem}_",
+        header=lambda when: f"{source_line} {when}",
+        started=now(),
+    )
+    return run_and_print(source, config, transcript)
 
 
 if __name__ == "__main__":

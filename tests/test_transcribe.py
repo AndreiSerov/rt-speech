@@ -5,6 +5,7 @@ import threading
 import time
 import wave
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -213,6 +214,7 @@ def test_a_failure_while_running_is_a_clean_error(
 def test_a_closed_pipe_exits_quietly(
     engine: FakeEngine,
     speech_wav: Path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -220,8 +222,10 @@ def test_a_closed_pipe_exits_quietly(
         raise BrokenPipeError
 
     monkeypatch.setattr("rt_speech.transcribe.run_pipeline", fail)
+    config = tmp_path / "config.toml"
+    config.write_text("[transcript]\nenabled = false\n")
 
-    assert main([str(speech_wav)]) == 0
+    assert main([str(speech_wav), "--config", str(config)]) == 0
 
     assert capsys.readouterr().err == ""
 
@@ -386,3 +390,154 @@ def test_a_failed_run_leaves_nothing_for_the_final_flush_to_trip_over(
     assert main([str(speech_wav)]) == 1
 
     assert silenced == [True]
+
+
+STARTED = datetime(2026, 11, 6, 14, 30, 5)
+
+
+def _transcript_config(tmp_path: Path, extra: str = "") -> tuple[Path, Path]:
+    """A config file whose Transcripts go under tmp_path. Returns it and the root."""
+    root = tmp_path / "transcripts"
+    config = tmp_path / "config.toml"
+    config.write_text(f'[transcript]\ndir = "{root}"\n{extra}')
+    return config, root
+
+
+def _closing(*turns: Turn) -> Callable[..., object]:
+    """A pipeline that closes the given Turns, in order, and ends."""
+
+    async def fake(
+        _source: object,
+        _vad: object,
+        _stt: object,
+        _config: object,
+        on_turn: Callable[[Turn], None],
+        **_: object,
+    ) -> None:
+        for turn in turns:
+            on_turn(turn)
+
+    return fake
+
+
+def test_a_run_saves_its_turns_in_a_transcript_named_by_its_start(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, root = _transcript_config(tmp_path)
+    monkeypatch.setattr(
+        "rt_speech.transcribe.run_pipeline",
+        _closing(
+            Turn(Speaker.CLIENT, "Привет", 12.9, 14.0),
+            Turn(Speaker.ME, "Hello", 11.0, 12.0),
+        ),
+    )
+
+    code = main([str(speech_wav), "--config", str(config)], now=lambda: STARTED)
+
+    assert code == 0
+    saved = root / "transcribe" / "en_2026-11-06_14-30-05.txt"
+    assert saved.read_text(encoding="utf-8") == (
+        "Файл en.wav, обработан 2026-11-06 14:30:05\n"
+        "\n"
+        "[00:00:12] [client] Привет\n"
+        "[00:00:11] [me] Hello\n"
+    )
+
+
+def test_other_lists_both_files_and_the_name_uses_the_main_one(
+    engine: FakeEngine,
+    speech_wav: Path,
+    russian_speech_wav: Path,
+    tmp_path: Path,
+) -> None:
+    config, root = _transcript_config(tmp_path)
+
+    code = main(
+        [str(speech_wav), "--other", str(russian_speech_wav), "--config", str(config)],
+        now=lambda: STARTED,
+    )
+
+    assert code == 0
+    saved = root / "transcribe" / "en_2026-11-06_14-30-05.txt"
+    first_line = saved.read_text(encoding="utf-8").splitlines()[0]
+    assert first_line == "Файлы en.wav и ru.wav, обработаны 2026-11-06 14:30:05"
+
+
+def test_hours_keep_counting_past_a_day(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, root = _transcript_config(tmp_path)
+    monkeypatch.setattr(
+        "rt_speech.transcribe.run_pipeline",
+        _closing(Turn(Speaker.CLIENT, "late", 90061.9, 90065.0)),
+    )
+
+    assert main([str(speech_wav), "--config", str(config)], now=lambda: STARTED) == 0
+
+    saved = root / "transcribe" / "en_2026-11-06_14-30-05.txt"
+    assert (
+        saved.read_text(encoding="utf-8").splitlines()[2] == "[25:01:01] [client] late"
+    )
+
+
+def test_suggestions_stay_out_of_the_transcript(
+    engine: FakeEngine, speech_wav: Path, tmp_path: Path
+) -> None:
+    config, root = _transcript_config(tmp_path)
+
+    assert main([str(speech_wav), "--config", str(config)], now=lambda: STARTED) == 0
+
+    saved = root / "transcribe" / "en_2026-11-06_14-30-05.txt"
+    assert saved.read_text(encoding="utf-8").endswith("[client] phrase1\n")
+
+
+def test_the_path_goes_to_stderr_and_stdout_is_unchanged(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, root = _transcript_config(tmp_path, '[suggester]\nengine = "off"\n')
+
+    assert main([str(speech_wav), "--config", str(config)], now=lambda: STARTED) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == "[client] phrase1\n"
+    assert f"{root}/transcribe/en_2026-11-06_14-30-05.txt\n" in captured.err
+
+
+def test_a_run_without_speech_leaves_no_file(
+    engine: FakeEngine, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    silence = tmp_path / "silence.wav"
+    with wave.open(str(silence), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(SAMPLE_RATE)
+        wav.writeframes(bytes(2 * SAMPLE_RATE))
+    config, root = _transcript_config(tmp_path)
+
+    assert main([str(silence), "--config", str(config)], now=lambda: STARTED) == 0
+
+    assert list(root.rglob("*.txt")) == []
+    assert capsys.readouterr().out == ""
+
+
+def test_transcripts_can_be_turned_off(
+    engine: FakeEngine,
+    speech_wav: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, root = _transcript_config(tmp_path, "enabled = false\n")
+
+    assert main([str(speech_wav), "--config", str(config)], now=lambda: STARTED) == 0
+
+    assert not root.exists()
+    assert "Transcript" not in capsys.readouterr().err

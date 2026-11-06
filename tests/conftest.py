@@ -7,6 +7,28 @@ import pytest
 from numpy.typing import NDArray
 
 from rt_speech.audio import FRAME_SAMPLES, SAMPLE_RATE
+from rt_speech.config import Config, TranscriptConfig, load_config
+
+_DEFAULT_TRANSCRIPT_DIR = TranscriptConfig().dir
+
+
+@pytest.fixture(autouse=True)
+def keep_transcripts_out_of_the_repo(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tests call `main()` with the committed config, whose Transcript directory is
+    relative to the repo. A config that doesn't choose its own is sent to a temp dir."""
+    safe = tmp_path_factory.mktemp("transcripts")
+
+    def guarded(path: Path) -> Config:
+        config = load_config(path)
+        if config.transcript.dir != _DEFAULT_TRANSCRIPT_DIR:
+            return config
+        moved = config.transcript.model_copy(update={"dir": safe})
+        return config.model_copy(update={"transcript": moved})
+
+    for module in ("transcribe", "live"):
+        monkeypatch.setattr(f"rt_speech.{module}.load_config", guarded, raising=False)
 
 
 def _say(path: Path, text: str, voice: str | None = None) -> Path:

@@ -82,3 +82,31 @@ def test_a_non_utf8_file_is_rejected(tmp_path: Path) -> None:
 def test_missing_file_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="not found"):
         load_config(tmp_path / "nope.toml")
+
+
+def test_transcripts_are_on_by_default_under_transcripts(tmp_path: Path) -> None:
+    config = load_config(write(tmp_path, ""))
+
+    assert config.transcript.enabled is True
+    assert config.transcript.dir == Path("transcripts")
+
+
+def test_transcript_settings_are_loaded(tmp_path: Path) -> None:
+    path = write(tmp_path, '[transcript]\nenabled = false\ndir = "/data/calls"\n')
+
+    config = load_config(path)
+
+    assert config.transcript.enabled is False
+    assert config.transcript.dir == Path("/data/calls")
+
+
+def test_a_mistyped_transcript_key_is_an_error(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="directory"):
+        load_config(write(tmp_path, '[transcript]\ndirectory = "x"\n'))
+
+
+def test_the_committed_config_spells_out_the_transcript_defaults() -> None:
+    config = load_config(REPO_ROOT / "config.toml")
+
+    assert config.transcript.enabled is True
+    assert config.transcript.dir == Path("transcripts")
